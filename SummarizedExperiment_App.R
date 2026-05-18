@@ -492,18 +492,51 @@ server <- function(input, output, session) {
     df_long$publication <- 
       "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species"
     
+    # Compute p-values for transcriptomic experiments only
+    deg_df <- metadata(se_combined)$deg_df
+    
+    df_long$p_value <- vapply(seq_len(nrow(df_long)), function(i) {
+      gene <- df_long$Gene[i]
+      cond <- df_long$Condition[i]
+      
+      exp_name <- as.character(colData(se_combined)[cond, "experiment"])
+      
+      # Identify the padj column for this condition
+      suffix   <- sub("^log2_Fold_change_", "", cond)
+      padj_col <- paste0("padj_", suffix)
+      
+      row_idx <- which(
+        deg_df$gene_id == gene &
+          deg_df$experiment == exp_name
+      )
+      
+      if (length(row_idx) == 1 && padj_col %in% colnames(deg_df)) {
+        as.numeric(deg_df[row_idx, padj_col])
+      } else {
+        NA_real_
+      }
+    }, numeric(1))
+    
+    df_long$p_value_fmt <- ifelse(
+      is.na(df_long$p_value),
+      "",
+      paste0("P-value: ", formatC(df_long$p_value, format = "e", digits = 2))
+    )
+    
     df_long$hover_text <- paste0(
       "<b>", df_long$Gene, "</b>",
       "<br>", df_long$gene_name,
       "<br><br>",
       "Condition: ", df_long$Condition,
       "<br>log2FC: ", round(df_long$Value, 3),
+      ifelse(df_long$p_value_fmt == "", "", paste0("<br>", df_long$p_value_fmt)),
       "<br><br>",
       "PMID: ", df_long$pmid,
       "<br>DOI: ", df_long$doi,
       "<br><br>",
       "Click for publication details"
     )
+    
     
     p <- plot_ly(
       data = df_long,

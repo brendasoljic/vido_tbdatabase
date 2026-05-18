@@ -103,7 +103,6 @@ load_experiment_se <- function(file, sheet, experiment_name,
   
   # ---- Build DEG table ----
   
-  # EXISTING TRANSCRIPTOMICS DEG LOGIC
   deg_df <- df %>%
     transmute(
       gene_id   = .data[[gene_id_col]],
@@ -234,16 +233,67 @@ ui <- page_navbar(
     "Overview",
     fluidPage(
       br(),
+      
+      fluidRow(
+        column(
+          width = 4,
+          card(
+            card_header("Total Experiments"),
+            card_body(
+              h2(
+                nrow(
+                  metadata(se_combined)$summary
+                )
+              )
+            )
+          )
+        ),
+        
+        column(
+          width = 4,
+          card(
+            card_header("Transcriptomic Experiments"),
+            card_body(
+              h2(
+                sum(
+                  metadata(se_combined)$summary$omics_type ==
+                    "Transcriptomics"
+                )
+              )
+            )
+          )
+        ),
+        
+        column(
+          width = 4,
+          card(
+            card_header("Proteomic Experiments"),
+            card_body(
+              h2(
+                sum(
+                  metadata(se_combined)$summary$omics_type ==
+                    "Proteomics"
+                )
+              )
+            )
+          )
+        )
+      ),
+      
+      br(),
+      
       h3("Experiment Summaries"),
       
       h4("Transcriptomics Experiments"),
       DTOutput("transcript_table"),
+      
       br(), br(),
       
       h4("Proteomics Experiments"),
       DTOutput("proteomics_table")
     )
-  ),
+  )
+  ,
   
   nav_panel(
     "Gene Browser",
@@ -262,8 +312,13 @@ ui <- page_navbar(
           h3("Gene Information"),
           tableOutput("gene_info"),
           br(),
-          h3("Expression Values (all experiments)"),
-          tableOutput("gene_expression")
+          
+          h3("Transcriptomic Expression Values"),
+          tableOutput("gene_expression_tx"),
+          br(),
+          
+          h3("Proteomic Expression Values"),
+          tableOutput("gene_expression_px")
         )
       )
     )
@@ -332,14 +387,25 @@ server <- function(input, output, session) {
     rowData(se_combined)[input$selected_gene, , drop = FALSE]
   })
   
-  output$gene_expression <- renderTable({
+  output$gene_expression_tx <- renderTable({
     
-    conds <- colnames(assay(se_combined))
-    log2fc_vals <- as.numeric(assay(se_combined)[input$selected_gene, ])
+    # Identify transcriptomic experiments
+    tx_experiments <- metadata(se_combined)$summary$experiment_name[
+      metadata(se_combined)$summary$omics_type == "Transcriptomics"
+    ]
+    
+    tx_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in% tx_experiments]
+    
+    if (length(tx_cols) == 0) {
+      return(data.frame(Message = "No transcriptomic data available"))
+    }
+    
+    conds <- tx_cols
+    log2fc_vals <- as.numeric(assay(se_combined)[input$selected_gene, conds])
     
     deg_df <- metadata(se_combined)$deg_df
-    this_gene <- deg_df[deg_df$gene_id == input$selected_gene, , drop = FALSE]
     
+    # Compute padj values for transcriptomics
     pvals <- vapply(conds, function(cn) {
       
       exp_name <- as.character(colData(se_combined)[cn, "experiment"])
@@ -358,7 +424,6 @@ server <- function(input, output, session) {
       }
     }, numeric(1))
     
-    # format P-values in scientific notation
     pvals_fmt <- ifelse(
       is.na(pvals),
       NA,
@@ -372,6 +437,29 @@ server <- function(input, output, session) {
       check.names = FALSE
     )
   })
+  
+  output$gene_expression_px <- renderTable({
+    
+    # Identify proteomic experiments
+    px_experiments <- metadata(se_combined)$summary$experiment_name[
+      metadata(se_combined)$summary$omics_type == "Proteomics"
+    ]
+    
+    px_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in% px_experiments]
+    
+    if (length(px_cols) == 0) {
+      return(data.frame(Message = "No proteomic data available"))
+    }
+    
+    expr_vals <- as.numeric(assay(se_combined)[input$selected_gene, px_cols])
+    
+    data.frame(
+      condition = px_cols,
+      expression = expr_vals,
+      check.names = FALSE
+    )
+  })
+  
   
   output$heatmap_plot <- renderPlotly({
     
