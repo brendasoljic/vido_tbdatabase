@@ -202,19 +202,19 @@ combine_se <- function(se_list) {
 
 # ---- Load datasets ----
 se_Vilcheze <- load_experiment_se(
-  file = "C:/Users/mayac/OneDrive/Documents/VIDO/Transcriptome_Vilcheze.xlsx",
+  file = "data/Transcriptome_Vilcheze.xlsx",
   sheet = "Table S2c log2 fold change",
   experiment_name = "Vilcheze Transcriptome"
 )
 
 se_Shee <- load_experiment_se(
-  file = "C:/Users/mayac/OneDrive/Documents/VIDO/Transcriptome_Shee.xlsx",
+  file = "data/Transcriptome_Shee.xlsx",
   sheet = "Sheet1",
   experiment_name = "Shee Transcriptome"
 )
 
 se_Schubert <- load_experiment_se(
-  file = "C:/Users/mayac/OneDrive/Documents/VIDO/Proteome_Schubert.xlsx",
+  file = "data/Proteome_Schubert_2015.xlsx",
   sheet = "Mtb absolute per condition",
   experiment_name = "Schubert Proteome",
   omics_type = "Proteomics"

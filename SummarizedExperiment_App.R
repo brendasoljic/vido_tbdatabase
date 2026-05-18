@@ -234,16 +234,67 @@ ui <- page_navbar(
     "Overview",
     fluidPage(
       br(),
+      
+      fluidRow(
+        column(
+          width = 4,
+          card(
+            card_header("Total Experiments"),
+            card_body(
+              h2(
+                nrow(
+                  metadata(se_combined)$summary
+                )
+              )
+            )
+          )
+        ),
+        
+        column(
+          width = 4,
+          card(
+            card_header("Transcriptomic Experiments"),
+            card_body(
+              h2(
+                sum(
+                  metadata(se_combined)$summary$omics_type ==
+                    "Transcriptomics"
+                )
+              )
+            )
+          )
+        ),
+        
+        column(
+          width = 4,
+          card(
+            card_header("Proteomic Experiments"),
+            card_body(
+              h2(
+                sum(
+                  metadata(se_combined)$summary$omics_type ==
+                    "Proteomics"
+                )
+              )
+            )
+          )
+        )
+      ),
+      
+      br(),
+      
       h3("Experiment Summaries"),
       
       h4("Transcriptomics Experiments"),
       DTOutput("transcript_table"),
+      
       br(), br(),
       
       h4("Proteomics Experiments"),
       DTOutput("proteomics_table")
     )
-  ),
+  )
+  ,
   
   nav_panel(
     "Gene Browser",
