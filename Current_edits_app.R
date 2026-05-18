@@ -35,8 +35,6 @@ load_experiment_se <- function(file, sheet, experiment_name,
   if (experiment_name == "Shee Transcriptome") {
     assay_cols <- c("moxi2x_GSM1829746", "moxi4x_GSM1829747", "moxi8x_GSM1829748")
     assay_cols <- assay_cols[assay_cols %in% names(df)]  # keep only existing
-  } else if (experiment_name == "Schubert Proteome") {
-    assay_cols <- names(df)[grepl("^expr_", names(df))]
   } else {
     # Vilcheze uses log2 fold change columns
     assay_cols <- names(df)[grepl("log2", names(df), ignore.case = TRUE)]
@@ -63,9 +61,6 @@ load_experiment_se <- function(file, sheet, experiment_name,
   # ---- Detect padj columns ----
   padj_cols <- names(df)[grepl("padj|FDR|adj", names(df), ignore.case = TRUE)]
   if (length(padj_cols) == 0) padj_cols <- character(0)
-  
-  sd_cols <- names(df)[grepl("^sd_", names(df), ignore.case = TRUE)]
-  if (length(sd_cols) == 0) sd_cols <- character(0)
   
   # ---- Build rowData ----
   rowData <- DataFrame(
@@ -102,15 +97,12 @@ load_experiment_se <- function(file, sheet, experiment_name,
   }
   
   # ---- Build DEG table ----
-    
-    # EXISTING TRANSCRIPTOMICS DEG LOGIC
   deg_df <- df %>%
     transmute(
       gene_id   = .data[[gene_id_col]],
       gene_name = .data[[gene_name_col]],
       across(all_of(assay_cols), .names = "fc_{col}"),
-      if (length(padj_cols) > 0) across(all_of(padj_cols), .names = "{col}"),
-      if (length(sd_cols) > 0) across(all_of(sd_cols), .names = "{col}"),
+      across(all_of(padj_cols), .names = "{col}"),
       deg_direction = if (!is.na(first_col)) {
         case_when(
           .data[[first_col]] > 0 ~ "Up",
@@ -122,7 +114,6 @@ load_experiment_se <- function(file, sheet, experiment_name,
       },
       experiment = experiment_name
     )
-
   
   
   # ---- Experiment summary ----
@@ -143,8 +134,7 @@ load_experiment_se <- function(file, sheet, experiment_name,
     colData = colData,
     metadata = list(
       deg_df = deg_df,
-      summary = experiment_summary,
-      sd_values = if (length(sd_cols) > 0) df[, sd_cols, drop = FALSE] else NULL
+      summary = experiment_summary
     )
   )
   
@@ -213,14 +203,7 @@ se_Shee <- load_experiment_se(
   experiment_name = "Shee Transcriptome"
 )
 
-se_Schubert <- load_experiment_se(
-  file = "C:/Users/mayac/OneDrive/Documents/VIDO/Proteome_Schubert.xlsx",
-  sheet = "Mtb absolute per condition",
-  experiment_name = "Schubert Proteome",
-  omics_type = "Proteomics"
-)
-
-se_combined <- combine_se(list(se_Vilcheze, se_Shee, se_Schubert))
+se_combined <- combine_se(list(se_Vilcheze, se_Shee))
 
 # =========================
 # Shiny App
@@ -281,7 +264,19 @@ ui <- page_navbar(
             choices = rownames(rowData(se_combined)),
             selected = rownames(rowData(se_combined))[1]
           ),
-          numericInput("n_genes", "Nearby genes:", 20, min = 5, max = 100)
+          numericInput(
+            "n_genes",
+            "Nearby genes:",
+            20,
+            min = 5,
+            max = 100
+          ),
+          checkboxGroupInput(
+            "selected_conditions",
+            "Select conditions to display:",
+            choices = colnames(assay(se_combined)),
+            selected = colnames(assay(se_combined))
+          )
         ),
         mainPanel(
           plotlyOutput("heatmap_plot", height = "600px")
@@ -381,17 +376,34 @@ server <- function(input, output, session) {
     start <- max(1, gene_index - floor(input$n_genes / 2))
     end <- min(nrow(assay(se_combined)), gene_index + floor(input$n_genes / 2))
     
-    # Keep only transcriptomic experiments
-    transcript_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in%
-                                                        metadata(se_combined)$summary$experiment_name[
-                                                          metadata(se_combined)$summary$omics_type == "Transcriptomics"
-                                                        ]]
+    selected_cols <- input$selected_conditions
     
-    mat <- assay(se_combined)[start:end, transcript_cols, drop = FALSE]
+    # Prevent plotly error when no columns selected
+    if (length(selected_cols) == 0) {
+      return(
+        plotly_empty() %>%
+          layout(title = "Please select at least one condition to display.")
+      )
+    }
+    
+    mat <- assay(se_combined)[start:end, selected_cols, drop = FALSE]
+    
+    # Prevent plotly error when only one column is selected
+    if (length(selected_cols) == 1) {
+      mat <- cbind(mat, NA)
+      colnames(mat)[2] <- " "
+    }
+    
     
     
     df_long <- reshape2::melt(mat)
     colnames(df_long) <- c("Gene", "Condition", "Value")
+    
+    # REQUIRED FIXES FOR PLOTLY
+    df_long$Condition <- as.character(df_long$Condition)
+    df_long$Gene <- as.character(df_long$Gene)
+    df_long$Value <- as.numeric(df_long$Value)
+    df_long$Condition <- gsub("%", "pct", df_long$Condition)
     
     gene_info <- as.data.frame(rowData(se_combined))
     

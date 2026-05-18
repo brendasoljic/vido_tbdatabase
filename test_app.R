@@ -31,28 +31,16 @@ load_experiment_se <- function(file, sheet, experiment_name,
   gene_id_col   <- safe_pick(gene_id_col, fallback = names(df)[1])
   gene_name_col <- safe_pick(gene_name_col, fallback = gene_id_col)
   
-  # ---- ASSAY COLUMN DETECTION ----
-  
-  if (omics_type == "Transcriptomics") {
-    
-    if (experiment_name == "Shee Transcriptome") {
-      assay_cols <- c("moxi2x_GSM1829746", "moxi4x_GSM1829747", "moxi8x_GSM1829748")
-      assay_cols <- assay_cols[assay_cols %in% names(df)]
-    } else {
-      assay_cols <- names(df)[grepl("log2", names(df), ignore.case = TRUE)]
-    }
-    
-  } else if (omics_type == "Proteomics") {
-    
-    # Expression columns renamed to expr_*
+  # ---- MANUAL ASSAY COLUMN DETECTION ----
+  if (experiment_name == "Shee Transcriptome") {
+    assay_cols <- c("moxi2x_GSM1829746", "moxi4x_GSM1829747", "moxi8x_GSM1829748")
+    assay_cols <- assay_cols[assay_cols %in% names(df)]  # keep only existing
+  } else if (experiment_name == "Schubert Proteome") {
     assay_cols <- names(df)[grepl("^expr_", names(df))]
-    
   } else {
-    
-    assay_cols <- character(0)
-    
+    # Vilcheze uses log2 fold change columns
+    assay_cols <- names(df)[grepl("log2", names(df), ignore.case = TRUE)]
   }
-  
   
   if (length(assay_cols) == 0) {
     message(paste("No assay columns detected for", experiment_name))
@@ -75,6 +63,9 @@ load_experiment_se <- function(file, sheet, experiment_name,
   # ---- Detect padj columns ----
   padj_cols <- names(df)[grepl("padj|FDR|adj", names(df), ignore.case = TRUE)]
   if (length(padj_cols) == 0) padj_cols <- character(0)
+  
+  sd_cols <- names(df)[grepl("^sd_", names(df), ignore.case = TRUE)]
+  if (length(sd_cols) == 0) sd_cols <- character(0)
   
   # ---- Build rowData ----
   rowData <- DataFrame(
@@ -111,12 +102,15 @@ load_experiment_se <- function(file, sheet, experiment_name,
   }
   
   # ---- Build DEG table ----
+  
+  # EXISTING TRANSCRIPTOMICS DEG LOGIC
   deg_df <- df %>%
     transmute(
       gene_id   = .data[[gene_id_col]],
       gene_name = .data[[gene_name_col]],
       across(all_of(assay_cols), .names = "fc_{col}"),
-      across(all_of(padj_cols), .names = "padj_{col}"),
+      if (length(padj_cols) > 0) across(all_of(padj_cols), .names = "{col}"),
+      if (length(sd_cols) > 0) across(all_of(sd_cols), .names = "{col}"),
       deg_direction = if (!is.na(first_col)) {
         case_when(
           .data[[first_col]] > 0 ~ "Up",
@@ -128,6 +122,7 @@ load_experiment_se <- function(file, sheet, experiment_name,
       },
       experiment = experiment_name
     )
+  
   
   
   # ---- Experiment summary ----
@@ -148,7 +143,8 @@ load_experiment_se <- function(file, sheet, experiment_name,
     colData = colData,
     metadata = list(
       deg_df = deg_df,
-      summary = experiment_summary
+      summary = experiment_summary,
+      sd_values = if (length(sd_cols) > 0) df[, sd_cols, drop = FALSE] else NULL
     )
   )
   
@@ -206,40 +202,25 @@ combine_se <- function(se_list) {
 
 # ---- Load datasets ----
 se_Vilcheze <- load_experiment_se(
-  file = "C:/Users/mayac/OneDrive/Documents/vido_tbdatabase/Transcriptome_Vilcheze.xlsx",
+  file = "C:/Users/mayac/OneDrive/Documents/VIDO/Transcriptome_Vilcheze.xlsx",
   sheet = "Table S2c log2 fold change",
   experiment_name = "Vilcheze Transcriptome"
 )
 
 se_Shee <- load_experiment_se(
-  file = "C:/Users/mayac/OneDrive/Documents/vido_tbdatabase/Transcriptome_Shee.xlsx",
+  file = "C:/Users/mayac/OneDrive/Documents/VIDO/Transcriptome_Shee.xlsx",
   sheet = "Sheet1",
   experiment_name = "Shee Transcriptome"
 )
 
-# Combine transcriptomics only
-se_transcriptome_combined <- combine_se(list(se_Vilcheze, se_Shee))
-
-# Proteomics
 se_Schubert <- load_experiment_se(
-  file = "C:/Users/mayac/OneDrive/Documents/vido_tbdatabase/Proteome_Schubert.xlsx",
-  omics_type = "Proteomics",
+  file = "C:/Users/mayac/OneDrive/Documents/VIDO/Proteome_Schubert.xlsx",
   sheet = "Mtb absolute per condition",
-  experiment_name = "Schubert Proteome"
+  experiment_name = "Schubert Proteome",
+  omics_type = "Proteomics"
 )
 
-# se_proteome_combined <- combine_se(list(se_Proteomics1))
-
-# For now, create an empty proteomics SE so the app runs
-se_proteome_combined <- SummarizedExperiment(
-  assays = list(log2FC = matrix(nrow = 0, ncol = 0)),
-  rowData = DataFrame(),
-  colData = DataFrame(),
-  metadata = list(
-    summary = data.frame(),
-    deg_df = data.frame()
-  )
-)
+se_combined <- combine_se(list(se_Vilcheze, se_Shee, se_Schubert))
 
 # =========================
 # Shiny App
@@ -262,55 +243,31 @@ ui <- page_navbar(
       h4("Proteomics Experiments"),
       DTOutput("proteomics_table")
     )
-  )
-  ,
+  ),
   
   nav_panel(
     "Gene Browser",
     fluidPage(
       br(),
-      h3("Transcriptomics"),
       sidebarLayout(
         sidebarPanel(
           selectizeInput(
-            "selected_gene_tx",
-            "Search gene (Transcriptomics):",
-            choices = rownames(rowData(se_transcriptome_combined)),
-            selected = rownames(rowData(se_transcriptome_combined))[1]
+            "selected_gene",
+            "Search gene by ID:",
+            choices = rownames(rowData(se_combined)),
+            selected = rownames(rowData(se_combined))[1]
           )
         ),
         mainPanel(
-          h4("Gene Information"),
-          tableOutput("gene_info_tx"),
+          h3("Gene Information"),
+          tableOutput("gene_info"),
           br(),
-          h4("Expression Values"),
-          tableOutput("gene_expression_tx")
-        )
-      ),
-      
-      br(), br(),
-      
-      h3("Proteomics"),
-      sidebarLayout(
-        sidebarPanel(
-          selectizeInput(
-            "selected_gene_px",
-            "Search gene (Proteomics):",
-            choices = rownames(rowData(se_proteome_combined)),
-            selected = NULL
-          )
-        ),
-        mainPanel(
-          h4("Gene Information"),
-          tableOutput("gene_info_px"),
-          br(),
-          h4("Expression Values"),
-          tableOutput("gene_expression_px")
+          h3("Expression Values (all experiments)"),
+          tableOutput("gene_expression")
         )
       )
     )
-  )
-  ,
+  ),
   
   nav_panel(
     "Heatmap",
@@ -321,8 +278,8 @@ ui <- page_navbar(
           selectizeInput(
             "heatmap_gene",
             "Choose a gene:",
-            choices = rownames(rowData(se_transcriptome_combined)),
-            selected = rownames(rowData(se_transcriptome_combined))[1]
+            choices = rownames(rowData(se_combined)),
+            selected = rownames(rowData(se_combined))[1]
           ),
           numericInput("n_genes", "Nearby genes:", 20, min = 5, max = 100)
         ),
@@ -376,80 +333,165 @@ server <- function(input, output, session) {
   })
   
   output$gene_expression <- renderTable({
+    
+    conds <- colnames(assay(se_combined))
+    log2fc_vals <- as.numeric(assay(se_combined)[input$selected_gene, ])
+    
+    deg_df <- metadata(se_combined)$deg_df
+    this_gene <- deg_df[deg_df$gene_id == input$selected_gene, , drop = FALSE]
+    
+    pvals <- vapply(conds, function(cn) {
+      
+      exp_name <- as.character(colData(se_combined)[cn, "experiment"])
+      suffix   <- sub("^log2_Fold_change_", "", cn)
+      padj_col <- paste0("padj_", suffix)
+      
+      row_idx <- which(
+        deg_df$gene_id == input$selected_gene &
+          deg_df$experiment == exp_name
+      )
+      
+      if (length(row_idx) == 1 && padj_col %in% colnames(deg_df)) {
+        as.numeric(deg_df[row_idx, padj_col])
+      } else {
+        NA_real_
+      }
+    }, numeric(1))
+    
+    # format P-values in scientific notation
+    pvals_fmt <- ifelse(
+      is.na(pvals),
+      NA,
+      formatC(pvals, format = "e", digits = 2)
+    )
+    
     data.frame(
-      condition = colnames(assay(se_combined)),
-      log2FC = as.numeric(assay(se_combined)[input$selected_gene, ])
+      condition = conds,
+      log2FC    = log2fc_vals,
+      "P-Value" = pvals_fmt,
+      check.names = FALSE
     )
   })
   
-  
   output$heatmap_plot <- renderPlotly({
-    gene_index <- match(input$heatmap_gene, rownames(assay(se_transcriptome_combined)))
+    
+    gene_index <- match(input$heatmap_gene, rownames(assay(se_combined)))
     if (is.na(gene_index)) return(NULL)
     
     start <- max(1, gene_index - floor(input$n_genes / 2))
-    end <- min(nrow(assay(se_transcriptome_combined)), gene_index + floor(input$n_genes / 2))
+    end <- min(nrow(assay(se_combined)), gene_index + floor(input$n_genes / 2))
     
-    mat <- assay(se_transcriptome_combined)[start:end, , drop = FALSE]
+    # Keep only transcriptomic experiments
+    transcript_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in%
+                                                        metadata(se_combined)$summary$experiment_name[
+                                                          metadata(se_combined)$summary$omics_type == "Transcriptomics"
+                                                        ]]
+    
+    mat <- assay(se_combined)[start:end, transcript_cols, drop = FALSE]
+    
     
     df_long <- reshape2::melt(mat)
     colnames(df_long) <- c("Gene", "Condition", "Value")
     
-    plot_ly(
+    gene_info <- as.data.frame(rowData(se_combined))
+    
+    df_long$gene_name <- gene_info$gene_name[
+      match(df_long$Gene, gene_info$gene_id)
+    ]
+    
+    df_long$pmid <- "35975988"
+    df_long$doi <- "10.1128/AAC.00592-22"
+    df_long$publication <- 
+      "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species"
+    
+    df_long$hover_text <- paste0(
+      "<b>", df_long$Gene, "</b>",
+      "<br>", df_long$gene_name,
+      "<br><br>",
+      "Condition: ", df_long$Condition,
+      "<br>log2FC: ", round(df_long$Value, 3),
+      "<br><br>",
+      "PMID: ", df_long$pmid,
+      "<br>DOI: ", df_long$doi,
+      "<br><br>",
+      "Click for publication details"
+    )
+    
+    p <- plot_ly(
       data = df_long,
       x = ~Condition,
       y = ~Gene,
       z = ~Value,
       type = "heatmap",
       colors = colorRamp(c("blue", "white", "red")),
-      hovertemplate = paste(
-        "Gene: %{y}<br>",
-        "Condition: %{x}<br>",
-        "log2FC: %{z}<extra></extra>"
-      )
+      text = ~hover_text,
+      hoverinfo = "text",
+      source = "heatmap_click"
     )
+    
+    p <- event_register(p, "plotly_click")
+    p
   })
+  
+  observeEvent(
+    event_data("plotly_click", source = "heatmap_click"),
+    {
+      click <- event_data("plotly_click", source = "heatmap_click")
+      
+      if (!is.null(click)) {
+        
+        selected_gene <- click$y
+        gene_info <- as.data.frame(rowData(se_combined))
+        
+        showModal(
+          modalDialog(
+            title = paste("Gene Details:", selected_gene),
+            
+            tags$strong("Gene Name:"),
+            br(),
+            gene_info$gene_name[
+              match(selected_gene, gene_info$gene_id)
+            ],
+            
+            br(), br(),
+            
+            tags$strong("Publication:"),
+            br(),
+            "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species",
+            
+            br(), br(),
+            
+            tags$a(
+              href = "https://pubmed.ncbi.nlm.nih.gov/35975988/",
+              target = "_blank",
+              "Open PubMed Page"
+            ),
+            
+            br(), br(),
+            
+            tags$a(
+              href = "https://doi.org/10.1128/AAC.00592-22",
+              target = "_blank",
+              "Open DOI Page"
+            ),
+            
+            easyClose = TRUE,
+            footer = modalButton("Close")
+          )
+        )
+      }
+    }
+  )
+  
   
   
   output$deg_table <- renderDT({
-    df <- bind_rows(
-      metadata(se_transcriptome_combined)$deg_df,
-      metadata(se_proteome_combined)$deg_df
-    )
-    
+    df <- metadata(se_combined)$deg_df
     if (input$deg_filter != "All") {
       df <- df %>% filter(deg_direction == input$deg_filter)
     }
-    
     datatable(df, rownames = FALSE)
   })
-  
-  # Transcriptomics
-  output$gene_info_tx <- renderTable({
-    rowData(se_transcriptome_combined)[input$selected_gene_tx, , drop = FALSE]
-  })
-  
-  output$gene_expression_tx <- renderTable({
-    data.frame(
-      condition = colnames(assay(se_transcriptome_combined)),
-      log2FC = as.numeric(assay(se_transcriptome_combined)[input$selected_gene_tx, ])
-    )
-  })
-  
-  # Proteomics
-  output$gene_info_px <- renderTable({
-    if (is.null(input$selected_gene_px)) return(NULL)
-    rowData(se_proteome_combined)[input$selected_gene_px, , drop = FALSE]
-  })
-  
-  output$gene_expression_px <- renderTable({
-    if (is.null(input$selected_gene_px)) return(NULL)
-    data.frame(
-      condition = colnames(assay(se_proteome_combined)),
-      log2FC = as.numeric(assay(se_proteome_combined)[input$selected_gene_px, ])
-    )
-  })
-  
 }
 
 shinyApp(ui, server)
