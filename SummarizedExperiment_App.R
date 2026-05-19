@@ -103,7 +103,7 @@ load_experiment_se <- function(file, sheet, experiment_name,
   }
   
   # ---- Build DEG table ----
-    
+  
   deg_df <- df %>%
     transmute(
       gene_id   = .data[[gene_id_col]],
@@ -122,7 +122,7 @@ load_experiment_se <- function(file, sheet, experiment_name,
       },
       experiment = experiment_name
     )
-
+  
   
   
   # ---- Experiment summary ----
@@ -302,24 +302,27 @@ ui <- page_navbar(
       br(),
       sidebarLayout(
         sidebarPanel(
+          checkboxGroupInput(
+            "selected_datasets",
+            "Choose datasets:",
+            choices = unique(colData(se_combined)$experiment),
+            selected = unique(colData(se_combined)$experiment)
+          ),
           selectizeInput(
             "selected_gene",
             "Search gene by ID:",
             choices = rownames(rowData(se_combined)),
             selected = rownames(rowData(se_combined))[1]
           )
-        ),
+        )
+        ,
         mainPanel(
           h3("Gene Information"),
           tableOutput("gene_info"),
           br(),
           
-          h3("Transcriptomic Expression Values"),
-          tableOutput("gene_expression_tx"),
-          br(),
-          
-          h3("Proteomic Expression Values"),
-          tableOutput("gene_expression_px")
+          h3("Expression Values"),
+          tableOutput("gene_expression_all")
         )
       )
     )
@@ -331,6 +334,16 @@ ui <- page_navbar(
       br(),
       sidebarLayout(
         sidebarPanel(
+          checkboxGroupInput(
+            "heatmap_datasets",
+            "Choose transcriptomic datasets:",
+            choices = metadata(se_combined)$summary$experiment_name[
+              metadata(se_combined)$summary$omics_type == "Transcriptomics"
+            ],
+            selected = metadata(se_combined)$summary$experiment_name[
+              metadata(se_combined)$summary$omics_type == "Transcriptomics"
+            ]
+          ),
           selectizeInput(
             "heatmap_gene",
             "Choose a gene:",
@@ -388,28 +401,29 @@ server <- function(input, output, session) {
     rowData(se_combined)[input$selected_gene, , drop = FALSE]
   })
   
-  output$gene_expression_tx <- renderTable({
+  output$gene_expression_all <- renderTable({
     
-    # Identify transcriptomic experiments
-    tx_experiments <- metadata(se_combined)$summary$experiment_name[
-      metadata(se_combined)$summary$omics_type == "Transcriptomics"
+    # Conditions from selected datasets
+    conds <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment %in% input$selected_datasets
     ]
     
-    tx_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in% tx_experiments]
-    
-    if (length(tx_cols) == 0) {
-      return(data.frame(Message = "No transcriptomic data available"))
+    if (length(conds) == 0) {
+      return(data.frame(Message = "No data available for selected datasets"))
     }
     
-    conds <- tx_cols
+    # Extract log2FC values
     log2fc_vals <- as.numeric(assay(se_combined)[input$selected_gene, conds])
     
+    # Pull DEG metadata
     deg_df <- metadata(se_combined)$deg_df
     
-    # Compute padj values for transcriptomics
+    # Compute padj values when available
     pvals <- vapply(conds, function(cn) {
       
       exp_name <- as.character(colData(se_combined)[cn, "experiment"])
+      
+      # Try to infer padj column name
       suffix   <- sub("^log2_Fold_change_", "", cn)
       padj_col <- paste0("padj_", suffix)
       
@@ -432,34 +446,13 @@ server <- function(input, output, session) {
     )
     
     data.frame(
-      condition = conds,
-      log2FC    = log2fc_vals,
-      "P-Value" = pvals_fmt,
+      Condition = conds,
+      Expression    = log2fc_vals,
+      P-Value      = pvals_fmt,
       check.names = FALSE
     )
   })
   
-  output$gene_expression_px <- renderTable({
-    
-    # Identify proteomic experiments
-    px_experiments <- metadata(se_combined)$summary$experiment_name[
-      metadata(se_combined)$summary$omics_type == "Proteomics"
-    ]
-    
-    px_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in% px_experiments]
-    
-    if (length(px_cols) == 0) {
-      return(data.frame(Message = "No proteomic data available"))
-    }
-    
-    expr_vals <- as.numeric(assay(se_combined)[input$selected_gene, px_cols])
-    
-    data.frame(
-      condition = px_cols,
-      expression = expr_vals,
-      check.names = FALSE
-    )
-  })
   
   
   output$heatmap_plot <- renderPlotly({
@@ -471,10 +464,10 @@ server <- function(input, output, session) {
     end <- min(nrow(assay(se_combined)), gene_index + floor(input$n_genes / 2))
     
     # Keep only transcriptomic experiments
-    transcript_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in%
-                                                        metadata(se_combined)$summary$experiment_name[
-                                                          metadata(se_combined)$summary$omics_type == "Transcriptomics"
-                                                        ]]
+    transcript_cols <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment %in% input$heatmap_datasets
+    ]
+    
     
     mat <- assay(se_combined)[start:end, transcript_cols, drop = FALSE]
     

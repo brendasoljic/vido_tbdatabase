@@ -8,6 +8,7 @@ library(pheatmap)
 library(bslib)
 library(plotly)
 
+#new test line
 
 # Helper to safely pick a column or fallback
 safe_pick <- function(x, fallback = NA_character_) {
@@ -301,24 +302,27 @@ ui <- page_navbar(
       br(),
       sidebarLayout(
         sidebarPanel(
+          checkboxGroupInput(
+            "selected_datasets",
+            "Choose datasets:",
+            choices = unique(colData(se_combined)$experiment),
+            selected = unique(colData(se_combined)$experiment)
+          ),
           selectizeInput(
             "selected_gene",
             "Search gene by ID:",
             choices = rownames(rowData(se_combined)),
             selected = rownames(rowData(se_combined))[1]
           )
-        ),
+        )
+        ,
         mainPanel(
           h3("Gene Information"),
           tableOutput("gene_info"),
           br(),
           
-          h3("Transcriptomic Expression Values"),
-          tableOutput("gene_expression_tx"),
-          br(),
-          
-          h3("Proteomic Expression Values"),
-          tableOutput("gene_expression_px")
+          h3("Expression Values"),
+          tableOutput("gene_expression_all")
         )
       )
     )
@@ -330,6 +334,16 @@ ui <- page_navbar(
       br(),
       sidebarLayout(
         sidebarPanel(
+          checkboxGroupInput(
+            "heatmap_datasets",
+            "Choose transcriptomic datasets:",
+            choices = metadata(se_combined)$summary$experiment_name[
+              metadata(se_combined)$summary$omics_type == "Transcriptomics"
+            ],
+            selected = metadata(se_combined)$summary$experiment_name[
+              metadata(se_combined)$summary$omics_type == "Transcriptomics"
+            ]
+          ),
           selectizeInput(
             "heatmap_gene",
             "Choose a gene:",
@@ -387,28 +401,29 @@ server <- function(input, output, session) {
     rowData(se_combined)[input$selected_gene, , drop = FALSE]
   })
   
-  output$gene_expression_tx <- renderTable({
+  output$gene_expression_all <- renderTable({
     
-    # Identify transcriptomic experiments
-    tx_experiments <- metadata(se_combined)$summary$experiment_name[
-      metadata(se_combined)$summary$omics_type == "Transcriptomics"
+    # Conditions from selected datasets
+    conds <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment %in% input$selected_datasets
     ]
     
-    tx_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in% tx_experiments]
-    
-    if (length(tx_cols) == 0) {
-      return(data.frame(Message = "No transcriptomic data available"))
+    if (length(conds) == 0) {
+      return(data.frame(Message = "No data available for selected datasets"))
     }
     
-    conds <- tx_cols
+    # Extract log2FC values
     log2fc_vals <- as.numeric(assay(se_combined)[input$selected_gene, conds])
     
+    # Pull DEG metadata
     deg_df <- metadata(se_combined)$deg_df
     
-    # Compute padj values for transcriptomics
+    # Compute padj values when available
     pvals <- vapply(conds, function(cn) {
       
       exp_name <- as.character(colData(se_combined)[cn, "experiment"])
+      
+      # Try to infer padj column name
       suffix   <- sub("^log2_Fold_change_", "", cn)
       padj_col <- paste0("padj_", suffix)
       
@@ -431,34 +446,13 @@ server <- function(input, output, session) {
     )
     
     data.frame(
-      condition = conds,
-      log2FC    = log2fc_vals,
-      "P-Value" = pvals_fmt,
+      Condition = conds,
+      Expression    = log2fc_vals,
+      P-Value      = pvals_fmt,
       check.names = FALSE
     )
   })
   
-  output$gene_expression_px <- renderTable({
-    
-    # Identify proteomic experiments
-    px_experiments <- metadata(se_combined)$summary$experiment_name[
-      metadata(se_combined)$summary$omics_type == "Proteomics"
-    ]
-    
-    px_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in% px_experiments]
-    
-    if (length(px_cols) == 0) {
-      return(data.frame(Message = "No proteomic data available"))
-    }
-    
-    expr_vals <- as.numeric(assay(se_combined)[input$selected_gene, px_cols])
-    
-    data.frame(
-      condition = px_cols,
-      expression = expr_vals,
-      check.names = FALSE
-    )
-  })
   
   
   output$heatmap_plot <- renderPlotly({
@@ -470,10 +464,10 @@ server <- function(input, output, session) {
     end <- min(nrow(assay(se_combined)), gene_index + floor(input$n_genes / 2))
     
     # Keep only transcriptomic experiments
-    transcript_cols <- rownames(colData(se_combined))[colData(se_combined)$experiment %in%
-                                                        metadata(se_combined)$summary$experiment_name[
-                                                          metadata(se_combined)$summary$omics_type == "Transcriptomics"
-                                                        ]]
+    transcript_cols <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment %in% input$heatmap_datasets
+    ]
+    
     
     mat <- assay(se_combined)[start:end, transcript_cols, drop = FALSE]
     
@@ -492,18 +486,51 @@ server <- function(input, output, session) {
     df_long$publication <- 
       "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species"
     
+    # Compute p-values for transcriptomic experiments only
+    deg_df <- metadata(se_combined)$deg_df
+    
+    df_long$p_value <- vapply(seq_len(nrow(df_long)), function(i) {
+      gene <- df_long$Gene[i]
+      cond <- df_long$Condition[i]
+      
+      exp_name <- as.character(colData(se_combined)[cond, "experiment"])
+      
+      # Identify the padj column for this condition
+      suffix   <- sub("^log2_Fold_change_", "", cond)
+      padj_col <- paste0("padj_", suffix)
+      
+      row_idx <- which(
+        deg_df$gene_id == gene &
+          deg_df$experiment == exp_name
+      )
+      
+      if (length(row_idx) == 1 && padj_col %in% colnames(deg_df)) {
+        as.numeric(deg_df[row_idx, padj_col])
+      } else {
+        NA_real_
+      }
+    }, numeric(1))
+    
+    df_long$p_value_fmt <- ifelse(
+      is.na(df_long$p_value),
+      "",
+      paste0("P-value: ", formatC(df_long$p_value, format = "e", digits = 2))
+    )
+    
     df_long$hover_text <- paste0(
       "<b>", df_long$Gene, "</b>",
       "<br>", df_long$gene_name,
       "<br><br>",
       "Condition: ", df_long$Condition,
       "<br>log2FC: ", round(df_long$Value, 3),
+      ifelse(df_long$p_value_fmt == "", "", paste0("<br>", df_long$p_value_fmt)),
       "<br><br>",
       "PMID: ", df_long$pmid,
       "<br>DOI: ", df_long$doi,
       "<br><br>",
       "Click for publication details"
     )
+    
     
     p <- plot_ly(
       data = df_long,
