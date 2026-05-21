@@ -7,6 +7,7 @@ library(DT)
 library(pheatmap)
 library(bslib)
 library(plotly)
+library(reshape2)
 
 #new test line
 
@@ -17,7 +18,11 @@ safe_pick <- function(x, fallback = NA_character_) {
 
 load_experiment_se <- function(file, sheet, experiment_name,
                                species = "M. tuberculosis H37Rv",
-                               omics_type = "Transcriptomics") {
+                               omics_type = "Transcriptomics",
+                               pmid = NA_character_,
+                               pmcid = NA_character_,
+                               doi = NA_character_,
+                               publication = NA_character_) {
   
   df <- read_excel(file, sheet = sheet)
   
@@ -109,8 +114,7 @@ load_experiment_se <- function(file, sheet, experiment_name,
       gene_id   = .data[[gene_id_col]],
       gene_name = .data[[gene_name_col]],
       across(all_of(assay_cols), .names = "fc_{col}"),
-      if (length(padj_cols) > 0) across(all_of(padj_cols), .names = "{col}"),
-      if (length(sd_cols) > 0) across(all_of(sd_cols), .names = "{col}"),
+      
       deg_direction = if (!is.na(first_col)) {
         case_when(
           .data[[first_col]] > 0 ~ "Up",
@@ -120,8 +124,27 @@ load_experiment_se <- function(file, sheet, experiment_name,
       } else {
         NA_character_
       },
+      
       experiment = experiment_name
     )
+  
+  # Add padj columns only if they exist
+  if (length(padj_cols) > 0) {
+    
+    padj_df <- df %>%
+      select(all_of(padj_cols))
+    
+    deg_df <- bind_cols(deg_df, padj_df)
+  }
+  
+  # Add sd columns only if they exist
+  if (length(sd_cols) > 0) {
+    
+    sd_df <- df %>%
+      select(all_of(sd_cols))
+    
+    deg_df <- bind_cols(deg_df, sd_df)
+  }
   
   
   
@@ -133,6 +156,25 @@ load_experiment_se <- function(file, sheet, experiment_name,
     n_genes = nrow(rowData),
     n_deg = nrow(deg_df),
     n_samples = ncol(assay_mat),
+    pmid = pmid,
+    pmcid = pmcid,
+    doi = doi,
+    publication = publication,
+    pubmed_link = if (!is.na(pmid)) {
+      paste0("https://pubmed.ncbi.nlm.nih.gov/", pmid, "/")
+    } else {
+      NA_character_
+    },
+    pmc_link = if (!is.na(pmcid) && pmcid != "") {
+      paste0("https://pmc.ncbi.nlm.nih.gov/articles/", pmcid, "/")
+    } else {
+      NA_character_
+    },
+    doi_link = if (!is.na(doi)) {
+      paste0("https://doi.org/", doi)
+    } else {
+      NA_character_
+    },
     stringsAsFactors = FALSE
   )
   
@@ -144,7 +186,11 @@ load_experiment_se <- function(file, sheet, experiment_name,
     metadata = list(
       deg_df = deg_df,
       summary = experiment_summary,
-      sd_values = if (length(sd_cols) > 0) df[, sd_cols, drop = FALSE] else NULL
+      sd_values = if (length(sd_cols) > 0) {
+        df[, sd_cols, drop = FALSE]
+      } else {
+        NULL
+      }
     )
   )
   
@@ -153,7 +199,12 @@ load_experiment_se <- function(file, sheet, experiment_name,
 
 combine_se <- function(se_list) {
   
-  all_genes <- Reduce(union, lapply(se_list, function(se) rownames(se)))
+  all_genes <- Reduce(
+    union,
+    lapply(se_list, function(se) {
+      rownames(se)
+    })
+  )
   
   master_rowData_raw <- rowData(se_list[[1]])
   master_rowData <- DataFrame(
@@ -191,8 +242,16 @@ combine_se <- function(se_list) {
   rowData(combined) <- master_rowData
   
   combined_metadata <- list(
-    deg_df = bind_rows(lapply(se_list, function(se) metadata(se)$deg_df)),
-    summary = bind_rows(lapply(se_list, function(se) metadata(se)$summary))
+    deg_df = bind_rows(
+      lapply(se_list, function(se) {
+        metadata(se)$deg_df
+      })
+    ),
+    summary = bind_rows(
+      lapply(se_list, function(se) {
+        metadata(se)$summary
+      })
+    )
   )
   
   metadata(combined) <- combined_metadata
@@ -204,27 +263,32 @@ combine_se <- function(se_list) {
 se_Vilcheze <- load_experiment_se(
   file = "data/Transcriptome_Vilcheze.xlsx",
   sheet = "Table S2c log2 fold change",
-  experiment_name = "Vilcheze Transcriptome"
+  experiment_name = "Vilcheze Transcriptome",
+  doi = "10.3389/fimmu.2022.909904",
+  pmcid = "PMC9283954",
+  publication = "Transcriptional profiling of Mycobacterium tuberculosis"
 )
 
 se_Shee <- load_experiment_se(
   file = "data/Transcriptome_Shee.xlsx",
   sheet = "Sheet1",
-  experiment_name = "Shee Transcriptome"
+  experiment_name = "Shee Transcriptome",
+  pmid = "35975988",
+  doi = "10.1128/AAC.00592-22",
+  publication = "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species"
 )
 
 se_Schubert <- load_experiment_se(
   file = "data/Proteome_Schubert_2015.xlsx",
   sheet = "Mtb absolute per condition",
   experiment_name = "Schubert Proteome",
-  omics_type = "Proteomics"
+  omics_type = "Proteomics",
+  publication = "Schubert Proteome 2015"
 )
 
 se_combined <- combine_se(list(se_Vilcheze, se_Shee, se_Schubert))
 
-# =========================
 # Shiny App
-# =========================
 
 ui <- page_navbar(
   title = "MtB Experiment Dashboard",
@@ -350,6 +414,23 @@ ui <- page_navbar(
             choices = rownames(rowData(se_combined)),
             selected = rownames(rowData(se_combined))[1]
           ),
+          selectizeInput(
+            "heatmap_conditions",
+            "Search/select conditions:",
+            choices = rownames(colData(se_combined))[
+              colData(se_combined)$experiment %in%
+                metadata(se_combined)$summary$experiment_name[
+                  metadata(se_combined)$summary$omics_type == "Transcriptomics"
+                ]
+            ],
+            selected = rownames(colData(se_combined))[
+              colData(se_combined)$experiment %in%
+                metadata(se_combined)$summary$experiment_name[
+                  metadata(se_combined)$summary$omics_type == "Transcriptomics"
+                ]
+            ],
+            multiple = TRUE
+          ),
           numericInput("n_genes", "Nearby genes:", 20, min = 5, max = 100)
         ),
         mainPanel(
@@ -448,7 +529,7 @@ server <- function(input, output, session) {
     data.frame(
       Condition = conds,
       Expression    = log2fc_vals,
-      P-Value      = pvals_fmt,
+      `P-Value` = pvals_fmt,
       check.names = FALSE
     )
   })
@@ -464,8 +545,10 @@ server <- function(input, output, session) {
     end <- min(nrow(assay(se_combined)), gene_index + floor(input$n_genes / 2))
     
     # Keep only transcriptomic experiments
-    transcript_cols <- rownames(colData(se_combined))[
-      colData(se_combined)$experiment %in% input$heatmap_datasets
+    transcript_cols <- input$heatmap_conditions
+    
+    transcript_cols <- transcript_cols[
+      colData(se_combined)[transcript_cols, "experiment"] %in% input$heatmap_datasets
     ]
     
     
@@ -481,10 +564,27 @@ server <- function(input, output, session) {
       match(df_long$Gene, gene_info$gene_id)
     ]
     
-    df_long$pmid <- "35975988"
-    df_long$doi <- "10.1128/AAC.00592-22"
-    df_long$publication <- 
-      "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species"
+    summary_df <- metadata(se_combined)$summary
+    
+    df_long$experiment <- as.character(
+      colData(se_combined)[df_long$Condition, "experiment"]
+    )
+    
+    df_long$publication <- summary_df$publication[
+      match(df_long$experiment, summary_df$experiment_name)
+    ]
+    
+    df_long$pmid <- summary_df$pmid[
+      match(df_long$experiment, summary_df$experiment_name)
+    ]
+    
+    df_long$pmcid <- summary_df$pmcid[
+      match(df_long$experiment, summary_df$experiment_name)
+    ]
+    
+    df_long$doi <- summary_df$doi[
+      match(df_long$experiment, summary_df$experiment_name)
+    ]
     
     # Compute p-values for transcriptomic experiments only
     deg_df <- metadata(se_combined)$deg_df
@@ -556,7 +656,30 @@ server <- function(input, output, session) {
       if (!is.null(click)) {
         
         selected_gene <- click$y
+        selected_condition <- click$x
+        
         gene_info <- as.data.frame(rowData(se_combined))
+        deg_df <- metadata(se_combined)$deg_df
+        
+        exp_name <- as.character(colData(se_combined)[selected_condition, "experiment"])
+        
+        summary_df <- metadata(se_combined)$summary
+        pub_row <- summary_df[summary_df$experiment_name == exp_name, ]
+        
+        suffix <- sub("^log2_Fold_change_", "", selected_condition)
+        padj_col <- paste0("padj_", suffix)
+        
+        row_idx <- which(
+          deg_df$gene_id == selected_gene &
+            deg_df$experiment == exp_name
+        )
+        
+        if (length(row_idx) == 1 && padj_col %in% colnames(deg_df)) {
+          p_value <- as.numeric(deg_df[row_idx, padj_col])
+          p_value_fmt <- formatC(p_value, format = "e", digits = 2)
+        } else {
+          p_value_fmt <- "N/A"
+        }
         
         showModal(
           modalDialog(
@@ -570,25 +693,53 @@ server <- function(input, output, session) {
             
             br(), br(),
             
+            tags$strong("Condition:"),
+            br(),
+            selected_condition,
+            
+            br(), br(),
+            
+            tags$strong("P-Value:"),
+            br(),
+            p_value_fmt,
+            
+            br(), br(),
+            
             tags$strong("Publication:"),
             br(),
-            "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species",
+            pub_row$publication[1],
             
             br(), br(),
             
-            tags$a(
-              href = "https://pubmed.ncbi.nlm.nih.gov/35975988/",
-              target = "_blank",
-              "Open PubMed Page"
-            ),
+            if (!is.na(pub_row$pubmed_link[1])) {
+              tags$div(
+                tags$a(
+                  href = pub_row$pubmed_link[1],
+                  target = "_blank",
+                  "Open PubMed Page"
+                )
+              )
+            },
             
-            br(), br(),
+            if (!is.na(pub_row$pmc_link[1])) {
+              tags$div(
+                tags$a(
+                  href = pub_row$pmc_link[1],
+                  target = "_blank",
+                  "Open PMC Page"
+                )
+              )
+            },
             
-            tags$a(
-              href = "https://doi.org/10.1128/AAC.00592-22",
-              target = "_blank",
-              "Open DOI Page"
-            ),
+            if (!is.na(pub_row$doi_link[1])) {
+              tags$div(
+                tags$a(
+                  href = pub_row$doi_link[1],
+                  target = "_blank",
+                  "Open DOI Page"
+                )
+              )
+            },
             
             easyClose = TRUE,
             footer = modalButton("Close")
