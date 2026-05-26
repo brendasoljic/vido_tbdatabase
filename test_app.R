@@ -9,8 +9,6 @@ library(bslib)
 library(plotly)
 library(reshape2)
 
-#new test line
-
 # Helper to safely pick a column or fallback
 safe_pick <- function(x, fallback = NA_character_) {
   if (length(x) == 0 || is.na(x)) fallback else x
@@ -26,25 +24,21 @@ load_experiment_se <- function(file, sheet, experiment_name,
   
   df <- read_excel(file, sheet = sheet)
   
-  # Clean column names
   names(df) <- trimws(names(df))
   names(df) <- gsub("\\s+", "_", names(df))
   
-  # ---- Detect gene columns ----
   gene_id_col   <- names(df)[grepl("Gene$|Rv|Primary_Target", names(df), ignore.case = TRUE)][1]
   gene_name_col <- names(df)[grepl("Gene_Name|Common_Name|Gene_Symbol", names(df), ignore.case = TRUE)][1]
   
   gene_id_col   <- safe_pick(gene_id_col, fallback = names(df)[1])
   gene_name_col <- safe_pick(gene_name_col, fallback = gene_id_col)
   
-  # ---- MANUAL ASSAY COLUMN DETECTION ----
   if (experiment_name == "Shee Transcriptome") {
     assay_cols <- c("moxi2x_GSM1829746", "moxi4x_GSM1829747", "moxi8x_GSM1829748")
-    assay_cols <- assay_cols[assay_cols %in% names(df)]  # keep only existing
+    assay_cols <- assay_cols[assay_cols %in% names(df)]
   } else if (experiment_name == "Schubert Proteome") {
     assay_cols <- names(df)[grepl("^expr_", names(df))]
   } else {
-    # Vilcheze uses log2 fold change columns
     assay_cols <- names(df)[grepl("log2", names(df), ignore.case = TRUE)]
   }
   
@@ -52,7 +46,6 @@ load_experiment_se <- function(file, sheet, experiment_name,
     message(paste("No assay columns detected for", experiment_name))
   }
   
-  # ---- Build colData ----
   if (length(assay_cols) == 0) {
     colData <- DataFrame(
       condition = character(0),
@@ -66,14 +59,12 @@ load_experiment_se <- function(file, sheet, experiment_name,
   }
   rownames(colData) <- assay_cols
   
-  # ---- Detect padj columns ----
   padj_cols <- names(df)[grepl("padj|FDR|adj", names(df), ignore.case = TRUE)]
   if (length(padj_cols) == 0) padj_cols <- character(0)
   
   sd_cols <- names(df)[grepl("^sd_", names(df), ignore.case = TRUE)]
   if (length(sd_cols) == 0) sd_cols <- character(0)
   
-  # ---- Build rowData ----
   rowData <- DataFrame(
     gene_id   = df[[gene_id_col]],
     gene_name = df[[gene_name_col]]
@@ -89,7 +80,6 @@ load_experiment_se <- function(file, sheet, experiment_name,
   
   rownames(rowData) <- rowData$gene_id
   
-  # ---- Build assay matrix ----
   if (length(assay_cols) > 0) {
     assay_mat <- as.matrix(df[, assay_cols])
     assay_mat <- suppressWarnings(apply(assay_mat, 2, as.numeric))
@@ -100,7 +90,6 @@ load_experiment_se <- function(file, sheet, experiment_name,
     colnames(assay_mat) <- character(0)
   }
   
-  # Precompute first_col safely
   if (length(assay_cols) > 0) {
     first_col <- assay_cols[1]
   } else {
@@ -128,27 +117,22 @@ load_experiment_se <- function(file, sheet, experiment_name,
       experiment = experiment_name
     )
   
-  # Add padj columns only if they exist
   if (length(padj_cols) > 0) {
-    
     padj_df <- df %>%
       select(all_of(padj_cols))
     
     deg_df <- bind_cols(deg_df, padj_df)
   }
   
-  # Add sd columns only if they exist
   if (length(sd_cols) > 0) {
-    
     sd_df <- df %>%
       select(all_of(sd_cols))
     
     deg_df <- bind_cols(deg_df, sd_df)
   }
   
-  
-  
   # ---- Experiment summary ----
+  
   experiment_summary <- data.frame(
     experiment_name = experiment_name,
     omics_type = omics_type,
@@ -160,7 +144,7 @@ load_experiment_se <- function(file, sheet, experiment_name,
     pmcid = pmcid,
     doi = doi,
     publication = publication,
-    pubmed_link = if (!is.na(pmid)) {
+    pubmed_link = if (!is.na(pmid) && pmid != "") {
       paste0("https://pubmed.ncbi.nlm.nih.gov/", pmid, "/")
     } else {
       NA_character_
@@ -170,7 +154,7 @@ load_experiment_se <- function(file, sheet, experiment_name,
     } else {
       NA_character_
     },
-    doi_link = if (!is.na(doi)) {
+    doi_link = if (!is.na(doi) && doi != "") {
       paste0("https://doi.org/", doi)
     } else {
       NA_character_
@@ -178,7 +162,6 @@ load_experiment_se <- function(file, sheet, experiment_name,
     stringsAsFactors = FALSE
   )
   
-  # ---- Build SummarizedExperiment ----
   se <- SummarizedExperiment(
     assays = list(log2FC = assay_mat),
     rowData = rowData,
@@ -260,6 +243,7 @@ combine_se <- function(se_list) {
 }
 
 # ---- Load datasets ----
+
 se_Vilcheze <- load_experiment_se(
   file = "data/Transcriptome_Vilcheze.xlsx",
   sheet = "Table S2c log2 fold change",
@@ -305,41 +289,25 @@ ui <- page_navbar(
           card(
             card_header("Total Experiments"),
             card_body(
-              h2(
-                nrow(
-                  metadata(se_combined)$summary
-                )
-              )
+              h2(nrow(metadata(se_combined)$summary))
             )
           )
         ),
-        
         column(
           width = 4,
           card(
             card_header("Transcriptomic Experiments"),
             card_body(
-              h2(
-                sum(
-                  metadata(se_combined)$summary$omics_type ==
-                    "Transcriptomics"
-                )
-              )
+              h2(sum(metadata(se_combined)$summary$omics_type == "Transcriptomics"))
             )
           )
         ),
-        
         column(
           width = 4,
           card(
             card_header("Proteomic Experiments"),
             card_body(
-              h2(
-                sum(
-                  metadata(se_combined)$summary$omics_type ==
-                    "Proteomics"
-                )
-              )
+              h2(sum(metadata(se_combined)$summary$omics_type == "Proteomics"))
             )
           )
         )
@@ -357,8 +325,7 @@ ui <- page_navbar(
       h4("Proteomics Experiments"),
       DTOutput("proteomics_table")
     )
-  )
-  ,
+  ),
   
   nav_panel(
     "Gene Browser",
@@ -378,8 +345,7 @@ ui <- page_navbar(
             choices = rownames(rowData(se_combined)),
             selected = rownames(rowData(se_combined))[1]
           )
-        )
-        ,
+        ),
         mainPanel(
           h3("Gene Information"),
           tableOutput("gene_info"),
@@ -444,15 +410,54 @@ ui <- page_navbar(
     "DEGs",
     fluidPage(
       br(),
+      
+      fluidRow(
+        column(
+          width = 4,
+          card(
+            card_header("Total DEGs"),
+            card_body(
+              h2(textOutput("total_degs"))
+            )
+          )
+        ),
+        column(
+          width = 4,
+          card(
+            card_header("Upregulated"),
+            card_body(
+              h2(textOutput("up_degs"))
+            )
+          )
+        ),
+        column(
+          width = 4,
+          card(
+            card_header("Downregulated"),
+            card_body(
+              h2(textOutput("down_degs"))
+            )
+          )
+        )
+      ),
+      
+      br(),
+      
       sidebarLayout(
         sidebarPanel(
           selectInput(
             "deg_filter",
             "Filter DEG direction:",
             choices = c("All", "Up", "Down")
+          ),
+          selectInput(
+            "deg_experiment_filter",
+            "Filter experiment:",
+            choices = c("All", unique(metadata(se_combined)$deg_df$experiment))
           )
         ),
         mainPanel(
+          h3("Differentially Expressed Genes"),
           DTOutput("deg_table")
         )
       )
@@ -474,17 +479,12 @@ server <- function(input, output, session) {
     datatable(df, rownames = FALSE)
   })
   
-  output$experiment_table <- renderDT({
-    datatable(metadata(se_combined)$summary, rownames = FALSE)
-  })
-  
   output$gene_info <- renderTable({
     rowData(se_combined)[input$selected_gene, , drop = FALSE]
   })
   
   output$gene_expression_all <- renderTable({
     
-    # Conditions from selected datasets
     conds <- rownames(colData(se_combined))[
       colData(se_combined)$experiment %in% input$selected_datasets
     ]
@@ -493,19 +493,15 @@ server <- function(input, output, session) {
       return(data.frame(Message = "No data available for selected datasets"))
     }
     
-    # Extract log2FC values
     log2fc_vals <- as.numeric(assay(se_combined)[input$selected_gene, conds])
     
-    # Pull DEG metadata
     deg_df <- metadata(se_combined)$deg_df
     
-    # Compute padj values when available
     pvals <- vapply(conds, function(cn) {
       
       exp_name <- as.character(colData(se_combined)[cn, "experiment"])
       
-      # Try to infer padj column name
-      suffix   <- sub("^log2_Fold_change_", "", cn)
+      suffix <- sub("^log2_Fold_change_", "", cn)
       padj_col <- paste0("padj_", suffix)
       
       row_idx <- which(
@@ -528,13 +524,11 @@ server <- function(input, output, session) {
     
     data.frame(
       Condition = conds,
-      Expression    = log2fc_vals,
+      Expression = log2fc_vals,
       `P-Value` = pvals_fmt,
       check.names = FALSE
     )
   })
-  
-  
   
   output$heatmap_plot <- renderPlotly({
     
@@ -544,16 +538,17 @@ server <- function(input, output, session) {
     start <- max(1, gene_index - floor(input$n_genes / 2))
     end <- min(nrow(assay(se_combined)), gene_index + floor(input$n_genes / 2))
     
-    # Keep only transcriptomic experiments
     transcript_cols <- input$heatmap_conditions
     
     transcript_cols <- transcript_cols[
       colData(se_combined)[transcript_cols, "experiment"] %in% input$heatmap_datasets
     ]
     
+    if (length(transcript_cols) == 0) {
+      return(NULL)
+    }
     
     mat <- assay(se_combined)[start:end, transcript_cols, drop = FALSE]
-    
     
     df_long <- reshape2::melt(mat)
     colnames(df_long) <- c("Gene", "Condition", "Value")
@@ -586,7 +581,6 @@ server <- function(input, output, session) {
       match(df_long$experiment, summary_df$experiment_name)
     ]
     
-    # Compute p-values for transcriptomic experiments only
     deg_df <- metadata(se_combined)$deg_df
     
     df_long$p_value <- vapply(seq_len(nrow(df_long)), function(i) {
@@ -595,8 +589,7 @@ server <- function(input, output, session) {
       
       exp_name <- as.character(colData(se_combined)[cond, "experiment"])
       
-      # Identify the padj column for this condition
-      suffix   <- sub("^log2_Fold_change_", "", cond)
+      suffix <- sub("^log2_Fold_change_", "", cond)
       padj_col <- paste0("padj_", suffix)
       
       row_idx <- which(
@@ -630,7 +623,6 @@ server <- function(input, output, session) {
       "<br><br>",
       "Click for publication details"
     )
-    
     
     p <- plot_ly(
       data = df_long,
@@ -749,14 +741,39 @@ server <- function(input, output, session) {
     }
   )
   
+  output$total_degs <- renderText({
+    nrow(metadata(se_combined)$deg_df)
+  })
   
+  output$up_degs <- renderText({
+    sum(metadata(se_combined)$deg_df$deg_direction == "Up", na.rm = TRUE)
+  })
+  
+  output$down_degs <- renderText({
+    sum(metadata(se_combined)$deg_df$deg_direction == "Down", na.rm = TRUE)
+  })
   
   output$deg_table <- renderDT({
     df <- metadata(se_combined)$deg_df
+    
     if (input$deg_filter != "All") {
       df <- df %>% filter(deg_direction == input$deg_filter)
     }
-    datatable(df, rownames = FALSE)
+    
+    if (input$deg_experiment_filter != "All") {
+      df <- df %>% filter(experiment == input$deg_experiment_filter)
+    }
+    
+    datatable(
+      df,
+      rownames = FALSE,
+      filter = "top",
+      options = list(
+        pageLength = 15,
+        scrollX = TRUE,
+        autoWidth = TRUE
+      )
+    )
   })
 }
 
