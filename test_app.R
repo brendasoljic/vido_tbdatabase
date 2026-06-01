@@ -9,11 +9,12 @@ library(bslib)
 library(plotly)
 library(reshape2)
 
-# Helper to safely pick a column or fallback
+# Helper to avoid crashes with new datasets
 safe_pick <- function(x, fallback = NA_character_) {
   if (length(x) == 0 || is.na(x)) fallback else x
 }
 
+# ---- Load experiments function ----
 load_experiment_se <- function(file, sheet, experiment_name,
                                species = "M. tuberculosis H37Rv",
                                omics_type = "Transcriptomics",
@@ -21,6 +22,9 @@ load_experiment_se <- function(file, sheet, experiment_name,
                                pmcid = NA_character_,
                                doi = NA_character_,
                                publication = NA_character_) {
+  
+# ---- Reading columns correctly ----
+  # Will need work as we get new datasets, and could be standardized
   
   df <- read_excel(file, sheet = sheet)
   
@@ -272,7 +276,7 @@ se_Schubert <- load_experiment_se(
 
 se_combined <- combine_se(list(se_Vilcheze, se_Shee, se_Schubert))
 
-# Shiny App
+# ---- Shiny App ----
 
 ui <- page_navbar(
   title = "MtB Experiment Dashboard",
