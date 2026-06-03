@@ -38,13 +38,24 @@ load_experiment_se <- function(file, sheet, experiment_name,
   gene_name_col <- safe_pick(gene_name_col, fallback = gene_id_col)
   
   if (experiment_name == "Shee Transcriptome") {
+    
     assay_cols <- c("moxi2x_GSM1829746", "moxi4x_GSM1829747", "moxi8x_GSM1829748")
     assay_cols <- assay_cols[assay_cols %in% names(df)]
+    
   } else if (experiment_name == "Schubert Proteome") {
+    
     assay_cols <- names(df)[grepl("^expr_", names(df))]
+    
+  } else if (experiment_name == "Bei Transcriptome") {
+    
+    # Absolute transcriptome (log2 RPKM)
+    assay_cols <- "Mean_logRPKM"
+    
   } else {
+    
     assay_cols <- names(df)[grepl("log2", names(df), ignore.case = TRUE)]
   }
+  
   
   if (length(assay_cols) == 0) {
     message(paste("No assay columns detected for", experiment_name))
@@ -252,6 +263,7 @@ se_Vilcheze <- load_experiment_se(
   file = "data/Transcriptome_Vilcheze.xlsx",
   sheet = "Table S2c log2 fold change",
   experiment_name = "Vilcheze Transcriptome",
+  omics_type = "Transcriptomics",
   doi = "10.3389/fimmu.2022.909904",
   pmcid = "PMC9283954",
   publication = "Transcriptional profiling of Mycobacterium tuberculosis"
@@ -261,6 +273,7 @@ se_Shee <- load_experiment_se(
   file = "data/Transcriptome_Shee.xlsx",
   sheet = "Sheet1",
   experiment_name = "Shee Transcriptome",
+  omics_type = "Transcriptomics",
   pmid = "35975988",
   doi = "10.1128/AAC.00592-22",
   publication = "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species"
@@ -271,10 +284,24 @@ se_Schubert <- load_experiment_se(
   sheet = "Mtb absolute per condition",
   experiment_name = "Schubert Proteome",
   omics_type = "Proteomics",
+  pmid = "26094805",
+  doi = "10.1016/j.chom.2015.06.001",
   publication = "Schubert Proteome 2015"
 )
 
-se_combined <- combine_se(list(se_Vilcheze, se_Shee, se_Schubert))
+se_Bei <- load_experiment_se(
+  file = "data/Transcriptome_Bei_2024.xlsx",
+  sheet = "log2FC of 5th and 95th",
+  experiment_name = "Bei Transcriptome",
+  omics_type = "Transcriptomics",
+  pmid = "38600064",
+  pmcid = "PMC11006872",
+  doi = "10.1038/s41467-024-47410-5",
+  publication = "Genetically encoded transcriptional plasticity underlies stress adaptation in Mycobacterium tuberculosis"
+)
+
+
+se_combined <- combine_se(list(se_Vilcheze, se_Shee, se_Schubert, se_Bei))
 
 # ---- Shiny App ----
 
