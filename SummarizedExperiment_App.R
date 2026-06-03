@@ -18,6 +18,7 @@ safe_pick <- function(x, fallback = NA_character_) {
 load_experiment_se <- function(file, sheet, experiment_name,
                                species = "M. tuberculosis H37Rv",
                                omics_type = "Transcriptomics",
+                               expression_scale = "Relative",
                                pmid = NA_character_,
                                pmcid = NA_character_,
                                doi = NA_character_,
@@ -151,6 +152,7 @@ load_experiment_se <- function(file, sheet, experiment_name,
   experiment_summary <- data.frame(
     experiment_name = experiment_name,
     omics_type = omics_type,
+    expression_scale = expression_scale,
     species = species,
     n_genes = nrow(rowData),
     n_deg = nrow(deg_df),
@@ -264,6 +266,7 @@ se_Vilcheze <- load_experiment_se(
   sheet = "Table S2c log2 fold change",
   experiment_name = "Vilcheze Transcriptome",
   omics_type = "Transcriptomics",
+  expression_scale = "Relative",
   doi = "10.3389/fimmu.2022.909904",
   pmcid = "PMC9283954",
   publication = "Transcriptional profiling of Mycobacterium tuberculosis"
@@ -274,6 +277,7 @@ se_Shee <- load_experiment_se(
   sheet = "Sheet1",
   experiment_name = "Shee Transcriptome",
   omics_type = "Transcriptomics",
+  expression_scale = "Relative",
   pmid = "35975988",
   doi = "10.1128/AAC.00592-22",
   publication = "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species"
@@ -284,6 +288,7 @@ se_Schubert <- load_experiment_se(
   sheet = "Mtb absolute per condition",
   experiment_name = "Schubert Proteome",
   omics_type = "Proteomics",
+  expression_scale = "Absolute",
   pmid = "26094805",
   doi = "10.1016/j.chom.2015.06.001",
   publication = "Schubert Proteome 2015"
@@ -294,6 +299,7 @@ se_Bei <- load_experiment_se(
   sheet = "log2FC of 5th and 95th",
   experiment_name = "Bei Transcriptome",
   omics_type = "Transcriptomics",
+  expression_scale = "Absolute",
   pmid = "38600064",
   pmcid = "PMC11006872",
   doi = "10.1038/s41467-024-47410-5",
@@ -399,8 +405,8 @@ ui <- page_navbar(
             "heatmap_datasets",
             "Choose transcriptomic datasets:",
             choices = metadata(se_combined)$summary$experiment_name[
-              metadata(se_combined)$summary$omics_type == "Transcriptomics"
-            ],
+              metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                metadata(se_combined)$summary$expression_scale == "Relative"],
             selected = metadata(se_combined)$summary$experiment_name[
               metadata(se_combined)$summary$omics_type == "Transcriptomics"
             ]
@@ -455,7 +461,8 @@ ui <- page_navbar(
             "scatter_transcript",
             "Select transcriptomic datasets:",
             choices = metadata(se_combined)$summary$experiment_name[
-              metadata(se_combined)$summary$omics_type == "Transcriptomics"
+              metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                metadata(se_combined)$summary$expression_scale == "Absolute"
             ],
             selected = metadata(se_combined)$summary$experiment_name[
               metadata(se_combined)$summary$omics_type == "Transcriptomics"
@@ -467,7 +474,8 @@ ui <- page_navbar(
             "scatter_protein",
             "Select proteomic datasets:",
             choices = metadata(se_combined)$summary$experiment_name[
-              metadata(se_combined)$summary$omics_type == "Proteomics"
+              metadata(se_combined)$summary$omics_type == "Proteomics" &
+                metadata(se_combined)$summary$expression_scale == "Absolute"
             ],
             selected = metadata(se_combined)$summary$experiment_name[
               metadata(se_combined)$summary$omics_type == "Proteomics"
