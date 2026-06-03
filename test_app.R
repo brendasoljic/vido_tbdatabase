@@ -384,48 +384,58 @@ ui <- page_navbar(
           )
         ),
         mainPanel(
-          h3("Gene Information"),
-          tableOutput("gene_info"),
-          br(),
-          h3("Relative Expression Comparison"),
-          
-          fluidRow(
-            column(
-              width = 4,
-              selectizeInput(
-                "gb_condA",
-                "Condition A:",
-                choices = rownames(colData(se_combined))[
-                  colData(se_combined)$experiment %in%
-                    metadata(se_combined)$summary$experiment_name[
-                      metadata(se_combined)$summary$omics_type == "Transcriptomics" &
-                        metadata(se_combined)$summary$expression_scale == "Relative"
-                    ]
-                ]
-              )
+          accordion(
+            id = "gb_sections",
+            
+            accordion_panel(
+              title = "Gene Information",
+              tableOutput("gene_info")
             ),
-            column(
-              width = 4,
-              selectizeInput(
-                "gb_condB",
-                "Condition B:",
-                choices = rownames(colData(se_combined))[
-                  colData(se_combined)$experiment %in%
-                    metadata(se_combined)$summary$experiment_name[
-                      metadata(se_combined)$summary$omics_type == "Transcriptomics" &
-                        metadata(se_combined)$summary$expression_scale == "Relative"
+            
+            accordion_panel(
+              title = "Relative Expression Comparison",
+              
+              fluidRow(
+                column(
+                  width = 4,
+                  selectizeInput(
+                    "gb_condA",
+                    "Condition A:",
+                    choices = rownames(colData(se_combined))[
+                      colData(se_combined)$experiment %in%
+                        metadata(se_combined)$summary$experiment_name[
+                          metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                            metadata(se_combined)$summary$expression_scale == "Relative"
+                        ]
                     ]
-                ]
-              )
+                  )
+                ),
+                column(
+                  width = 4,
+                  selectizeInput(
+                    "gb_condB",
+                    "Condition B:",
+                    choices = rownames(colData(se_combined))[
+                      colData(se_combined)$experiment %in%
+                        metadata(se_combined)$summary$experiment_name[
+                          metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                            metadata(se_combined)$summary$expression_scale == "Relative"
+                        ]
+                    ]
+                  )
+                )
+              ),
+              
+              tableOutput("gb_relcomp")
+            ),
+            
+            accordion_panel(
+              title = "Expression Values by Experiment",
+              tableOutput("gene_expression_all")
             )
-          ),
+          )
           
-          tableOutput("gb_relcomp"),
           
-          br(),
-          
-          h3("Expression Values"),
-          tableOutput("gene_expression_all")
         )
       )
     )
