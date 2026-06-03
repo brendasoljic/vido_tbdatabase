@@ -648,11 +648,21 @@ server <- function(input, output, session) {
     for (exp_name in names(df_split)) {
       local({
         nm <- exp_name
-        df_exp <- df_split[[nm]][, c("Condition", "Expression", "P-Value")]
+        df_exp <- df_split[[nm]]
+        
+        # Identify metadata columns (anything not Condition/Expression/Experiment)
+        meta_cols <- setdiff(colnames(df_exp), c("Condition", "Expression", "Experiment"))
+        
+        # Keep only metadata columns that have at least one non-NA value
+        keep_meta <- meta_cols[sapply(meta_cols, function(col) any(!is.na(df_exp[[col]])))]
+        
+        # Build final column order
+        final_cols <- c("Condition", "Expression", keep_meta)
         
         output[[paste0("tbl_", nm)]] <- renderTable({
-          df_exp
+          df_exp[, final_cols, drop = FALSE]
         })
+        
       })
     }
     
