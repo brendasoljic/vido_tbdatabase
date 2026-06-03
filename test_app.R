@@ -387,6 +387,42 @@ ui <- page_navbar(
           h3("Gene Information"),
           tableOutput("gene_info"),
           br(),
+          h3("Relative Expression Comparison"),
+          
+          fluidRow(
+            column(
+              width = 4,
+              selectizeInput(
+                "gb_condA",
+                "Condition A:",
+                choices = rownames(colData(se_combined))[
+                  colData(se_combined)$experiment %in%
+                    metadata(se_combined)$summary$experiment_name[
+                      metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                        metadata(se_combined)$summary$expression_scale == "Relative"
+                    ]
+                ]
+              )
+            ),
+            column(
+              width = 4,
+              selectizeInput(
+                "gb_condB",
+                "Condition B:",
+                choices = rownames(colData(se_combined))[
+                  colData(se_combined)$experiment %in%
+                    metadata(se_combined)$summary$experiment_name[
+                      metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                        metadata(se_combined)$summary$expression_scale == "Relative"
+                    ]
+                ]
+              )
+            )
+          ),
+          
+          tableOutput("gb_relcomp"),
+          
+          br(),
           
           h3("Expression Values"),
           tableOutput("gene_expression_all")
@@ -394,6 +430,56 @@ ui <- page_navbar(
       )
     )
   ),
+  
+  nav_panel(
+    "Relative Comparison",
+    fluidPage(
+      br(),
+      sidebarLayout(
+        sidebarPanel(
+          selectizeInput(
+            "relcomp_genes",
+            "Select one or more genes:",
+            choices = rownames(rowData(se_combined)),
+            selected = rownames(rowData(se_combined))[1],
+            multiple = TRUE
+          ),
+          
+          h4("Condition A"),
+          selectizeInput(
+            "relcomp_condA",
+            "Choose Condition A:",
+            choices = rownames(colData(se_combined))[
+              colData(se_combined)$experiment %in%
+                metadata(se_combined)$summary$experiment_name[
+                  metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                    metadata(se_combined)$summary$expression_scale == "Relative"
+                ]
+            ]
+          ),
+          
+          h4("Condition B"),
+          selectizeInput(
+            "relcomp_condB",
+            "Choose Condition B:",
+            choices = rownames(colData(se_combined))[
+              colData(se_combined)$experiment %in%
+                metadata(se_combined)$summary$experiment_name[
+                  metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                    metadata(se_combined)$summary$expression_scale == "Relative"
+                ]
+            ]
+          )
+        ),
+        
+        mainPanel(
+          h3("Relative Expression Comparison"),
+          tableOutput("relcomp_table")
+        )
+      )
+    )
+  ),
+  
   
   nav_panel(
     "Heatmap",
@@ -569,29 +655,59 @@ server <- function(input, output, session) {
     rowData(se_combined)[input$selected_gene, , drop = FALSE]
   })
   
-  output$gene_expression_all <- renderTable({
+  output$gb_relcomp <- renderTable({
     
+    gene <- input$selected_gene
+    condA <- input$gb_condA
+    condB <- input$gb_condB
+    
+    if (is.null(gene) || is.null(condA) || is.null(condB)) {
+      return(data.frame(Message = "Select two conditions to compare."))
+    }
+    
+    # Extract log2FC values
+    valA <- as.numeric(assay(se_combined)[gene, condA])
+    valB <- as.numeric(assay(se_combined)[gene, condB])
+    
+    # Compute relative log2FC
+    rel <- valA - valB
+    
+    data.frame(
+      Metric = c("Condition A log2FC", "Condition B log2FC", "Relative log2FC (A - B)"),
+      Value = c(valA, valB, rel),
+      check.names = FALSE
+    )
+  })
+  
+  
+  output$gene_expression_all <- renderUI({
+    
+    gene <- input$selected_gene
+    
+    # Identify selected conditions
     conds <- rownames(colData(se_combined))[
       colData(se_combined)$experiment %in% input$selected_datasets
     ]
     
     if (length(conds) == 0) {
-      return(data.frame(Message = "No data available for selected datasets"))
+      return(tags$div("No data available for selected datasets"))
     }
     
-    log2fc_vals <- as.numeric(assay(se_combined)[input$selected_gene, conds])
+    # Extract values
+    log2fc_vals <- as.numeric(assay(se_combined)[gene, conds])
     
+    # Metadata
     deg_df <- metadata(se_combined)$deg_df
+    summary_df <- metadata(se_combined)$summary
     
+    # Compute p-values
     pvals <- vapply(conds, function(cn) {
-      
       exp_name <- as.character(colData(se_combined)[cn, "experiment"])
-      
       suffix <- sub("^log2_Fold_change_", "", cn)
       padj_col <- paste0("padj_", suffix)
       
       row_idx <- which(
-        deg_df$gene_id == input$selected_gene &
+        deg_df$gene_id == gene &
           deg_df$experiment == exp_name
       )
       
@@ -608,13 +724,89 @@ server <- function(input, output, session) {
       formatC(pvals, format = "e", digits = 2)
     )
     
-    data.frame(
+    # Build master df
+    df <- data.frame(
       Condition = conds,
       Expression = log2fc_vals,
       `P-Value` = pvals_fmt,
+      Experiment = colData(se_combined)[conds, "experiment"],
+      stringsAsFactors = FALSE,
+      check.names = FALSE
+    )
+    
+    # Split by experiment
+    df_split <- split(df, df$Experiment)
+    
+    # Build UI output
+    ui_list <- lapply(names(df_split), function(exp_name) {
+      
+      exp_row <- summary_df[summary_df$experiment_name == exp_name, ]
+      
+      subtitle <- paste0(
+        exp_name, " – ",
+        exp_row$expression_scale, " ",
+        exp_row$omics_type
+      )
+      
+      tagList(
+        tags$h4(subtitle),
+        tableOutput(paste0("tbl_", exp_name)),
+        tags$br()
+      )
+    })
+    
+    # Render each table separately
+    for (exp_name in names(df_split)) {
+      local({
+        nm <- exp_name
+        df_exp <- df_split[[nm]]
+        
+        # Identify metadata columns (anything not Condition/Expression/Experiment)
+        meta_cols <- setdiff(colnames(df_exp), c("Condition", "Expression", "Experiment"))
+        
+        # Keep only metadata columns that have at least one non-NA value
+        keep_meta <- meta_cols[sapply(meta_cols, function(col) any(!is.na(df_exp[[col]])))]
+        
+        # Build final column order
+        final_cols <- c("Condition", "Expression", keep_meta)
+        
+        output[[paste0("tbl_", nm)]] <- renderTable({
+          df_exp[, final_cols, drop = FALSE]
+        })
+        
+      })
+    }
+    
+    do.call(tagList, ui_list)
+  })
+  
+  output$relcomp_table <- renderTable({
+    
+    genes <- input$relcomp_genes
+    condA <- input$relcomp_condA
+    condB <- input$relcomp_condB
+    
+    if (is.null(genes) || is.null(condA) || is.null(condB)) {
+      return(data.frame(Message = "Please select genes and both conditions."))
+    }
+    
+    # Extract log2FC values
+    valsA <- as.numeric(assay(se_combined)[genes, condA])
+    valsB <- as.numeric(assay(se_combined)[genes, condB])
+    
+    # Compute relative log2FC
+    rel_vals <- valsA - valsB
+    
+    # Build output table
+    data.frame(
+      Gene = genes,
+      Condition_A = valsA,
+      Condition_B = valsB,
+      Relative_log2FC = rel_vals,
       check.names = FALSE
     )
   })
+  
   
   output$heatmap_plot <- renderPlotly({
     
