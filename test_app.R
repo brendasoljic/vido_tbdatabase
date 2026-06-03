@@ -502,34 +502,23 @@ ui <- page_navbar(
             "Choose transcriptomic datasets:",
             choices = metadata(se_combined)$summary$experiment_name[
               metadata(se_combined)$summary$omics_type == "Transcriptomics" &
-                metadata(se_combined)$summary$expression_scale == "Relative"],
+                metadata(se_combined)$summary$expression_scale == "Relative"
+            ],
             selected = metadata(se_combined)$summary$experiment_name[
-              metadata(se_combined)$summary$omics_type == "Transcriptomics"
+              metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                metadata(se_combined)$summary$expression_scale == "Relative"
             ]
           ),
+          
+          uiOutput("heatmap_condition_selector"),
+          
           selectizeInput(
             "heatmap_gene",
             "Choose a gene:",
             choices = rownames(rowData(se_combined)),
             selected = rownames(rowData(se_combined))[1]
           ),
-          selectizeInput(
-            "heatmap_conditions",
-            "Search/select conditions:",
-            choices = rownames(colData(se_combined))[
-              colData(se_combined)$experiment %in%
-                metadata(se_combined)$summary$experiment_name[
-                  metadata(se_combined)$summary$omics_type == "Transcriptomics"
-                ]
-            ],
-            selected = rownames(colData(se_combined))[
-              colData(se_combined)$experiment %in%
-                metadata(se_combined)$summary$experiment_name[
-                  metadata(se_combined)$summary$omics_type == "Transcriptomics"
-                ]
-            ],
-            multiple = TRUE
-          ),
+          
           numericInput("n_genes", "Nearby genes:", 20, min = 5, max = 100)
         ),
         mainPanel(
@@ -941,6 +930,28 @@ server <- function(input, output, session) {
     p <- event_register(p, "plotly_click")
     p
   })
+  
+  output$heatmap_condition_selector <- renderUI({
+    
+    exps <- input$heatmap_datasets
+    
+    if (is.null(exps) || length(exps) == 0) {
+      return(tags$div("Select one or more datasets to choose conditions."))
+    }
+    
+    # Find all conditions belonging to selected experiments
+    conds <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment %in% exps
+    ]
+    
+    checkboxGroupInput(
+      "heatmap_conditions",
+      "Select conditions:",
+      choices = conds,
+      selected = conds
+    )
+  })
+  
   
   observeEvent(
     event_data("plotly_click", source = "heatmap_click"),
