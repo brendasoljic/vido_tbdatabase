@@ -632,11 +632,25 @@ ui <- page_navbar(
             "Filter DEG direction:",
             choices = c("All", "Up", "Down")
           ),
-          selectInput(
-            "deg_experiment_filter",
-            "Filter experiment:",
-            choices = c("All", unique(metadata(se_combined)$deg_df$experiment))
-          )
+          numericInput(
+            "deg_magnitude",
+            "Minimum |log2FC| magnitude:",
+            value = 0,
+            min = 0,
+            max = 20,
+            step = 0.1
+          ),
+          
+          selectizeInput(
+            "deg_experiments",
+            "Select datasets:",
+            choices = unique(metadata(se_combined)$deg_df$experiment),
+            multiple = TRUE,
+            selected = unique(metadata(se_combined)$deg_df$experiment)
+          ),
+          
+          uiOutput("deg_condition_selector")
+          
         ),
         mainPanel(
           h3("Differentially Expressed Genes"),
@@ -1115,6 +1129,26 @@ server <- function(input, output, session) {
       )
   })
   
+  output$deg_condition_selector <- renderUI({
+    
+    exps <- input$deg_experiments
+    
+    if (is.null(exps) || length(exps) == 0) {
+      return(tags$div("Select one or more datasets to choose conditions."))
+    }
+    
+    # Find all conditions belonging to selected experiments
+    conds <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment %in% exps
+    ]
+    
+    checkboxGroupInput(
+      "deg_conditions",
+      "Select conditions:",
+      choices = conds,
+      selected = conds
+    )
+  })
   
   
   
@@ -1131,27 +1165,63 @@ server <- function(input, output, session) {
   })
   
   output$deg_table <- renderDT({
-    df <- metadata(se_combined)$deg_df
     
+    deg_df <- metadata(se_combined)$deg_df
+    
+    # ---- Filter rows by selected datasets ----
+    if (!is.null(input$deg_experiments) && length(input$deg_experiments) > 0) {
+      deg_df <- deg_df[deg_df$experiment %in% input$deg_experiments, ]
+    }
+    
+    # ---- Determine selected conditions ----
+    conds <- input$deg_conditions
+    
+    # Build fc column names
+    fc_cols <- paste0("fc_", conds)
+    fc_cols <- fc_cols[fc_cols %in% colnames(deg_df)]
+    
+    # ---- Direction filtering across selected conditions ----
     if (input$deg_filter != "All") {
-      df <- df %>% filter(deg_direction == input$deg_filter)
+      
+      if (input$deg_filter == "Up") {
+        keep_dir <- apply(deg_df[, fc_cols, drop = FALSE], 1, function(x) any(x > 0, na.rm = TRUE))
+      } else if (input$deg_filter == "Down") {
+        keep_dir <- apply(deg_df[, fc_cols, drop = FALSE], 1, function(x) any(x < 0, na.rm = TRUE))
+      } else {
+        keep_dir <- apply(deg_df[, fc_cols, drop = FALSE], 1, function(x) any(x == 0, na.rm = TRUE))
+      }
+      
+      deg_df <- deg_df[keep_dir, ]
     }
     
-    if (input$deg_experiment_filter != "All") {
-      df <- df %>% filter(experiment == input$deg_experiment_filter)
+    # ---- Magnitude filtering across selected conditions ----
+    mag <- input$deg_magnitude
+    
+    if (!is.null(mag) && mag > 0) {
+      keep_mag <- apply(deg_df[, fc_cols, drop = FALSE], 1, function(x) any(abs(x) >= mag, na.rm = TRUE))
+      deg_df <- deg_df[keep_mag, ]
     }
     
-    datatable(
-      df,
-      rownames = FALSE,
-      filter = "top",
-      options = list(
-        pageLength = 15,
-        scrollX = TRUE,
-        autoWidth = TRUE
-      )
-    )
+    # ---- Determine which columns to keep ----
+    base_cols <- c("gene_id", "gene_name", "deg_direction")
+    
+    # padj columns
+    padj_cols <- paste0("padj_", sub("^log2_Fold_change_", "", conds))
+    padj_cols <- padj_cols[padj_cols %in% colnames(deg_df)]
+    
+    # sd columns
+    sd_cols <- paste0("sd_", sub("^log2_Fold_change_", "", conds))
+    sd_cols <- sd_cols[sd_cols %in% colnames(deg_df)]
+    
+    keep_cols <- c(base_cols, fc_cols, padj_cols, sd_cols)
+    keep_cols <- keep_cols[keep_cols %in% colnames(deg_df)]
+    
+    df_out <- deg_df[, keep_cols, drop = FALSE]
+    
+    datatable(df_out, rownames = FALSE)
   })
+  
+  
 }
 
 shinyApp(ui, server)
