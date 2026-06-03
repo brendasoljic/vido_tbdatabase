@@ -569,29 +569,34 @@ server <- function(input, output, session) {
     rowData(se_combined)[input$selected_gene, , drop = FALSE]
   })
   
-  output$gene_expression_all <- renderTable({
+  output$gene_expression_all <- renderUI({
     
+    gene <- input$selected_gene
+    
+    # Identify selected conditions
     conds <- rownames(colData(se_combined))[
       colData(se_combined)$experiment %in% input$selected_datasets
     ]
     
     if (length(conds) == 0) {
-      return(data.frame(Message = "No data available for selected datasets"))
+      return(tags$div("No data available for selected datasets"))
     }
     
-    log2fc_vals <- as.numeric(assay(se_combined)[input$selected_gene, conds])
+    # Extract values
+    log2fc_vals <- as.numeric(assay(se_combined)[gene, conds])
     
+    # Metadata
     deg_df <- metadata(se_combined)$deg_df
+    summary_df <- metadata(se_combined)$summary
     
+    # Compute p-values
     pvals <- vapply(conds, function(cn) {
-      
       exp_name <- as.character(colData(se_combined)[cn, "experiment"])
-      
       suffix <- sub("^log2_Fold_change_", "", cn)
       padj_col <- paste0("padj_", suffix)
       
       row_idx <- which(
-        deg_df$gene_id == input$selected_gene &
+        deg_df$gene_id == gene &
           deg_df$experiment == exp_name
       )
       
@@ -608,13 +613,52 @@ server <- function(input, output, session) {
       formatC(pvals, format = "e", digits = 2)
     )
     
-    data.frame(
+    # Build master df
+    df <- data.frame(
       Condition = conds,
       Expression = log2fc_vals,
       `P-Value` = pvals_fmt,
+      Experiment = colData(se_combined)[conds, "experiment"],
+      stringsAsFactors = FALSE,
       check.names = FALSE
     )
+    
+    # Split by experiment
+    df_split <- split(df, df$Experiment)
+    
+    # Build UI output
+    ui_list <- lapply(names(df_split), function(exp_name) {
+      
+      exp_row <- summary_df[summary_df$experiment_name == exp_name, ]
+      
+      subtitle <- paste0(
+        exp_name, " – ",
+        exp_row$expression_scale, " ",
+        exp_row$omics_type
+      )
+      
+      tagList(
+        tags$h4(subtitle),
+        tableOutput(paste0("tbl_", exp_name)),
+        tags$br()
+      )
+    })
+    
+    # Render each table separately
+    for (exp_name in names(df_split)) {
+      local({
+        nm <- exp_name
+        df_exp <- df_split[[nm]][, c("Condition", "Expression", "P-Value")]
+        
+        output[[paste0("tbl_", nm)]] <- renderTable({
+          df_exp
+        })
+      })
+    }
+    
+    do.call(tagList, ui_list)
   })
+  
   
   output$heatmap_plot <- renderPlotly({
     
