@@ -18,12 +18,13 @@ safe_pick <- function(x, fallback = NA_character_) {
 load_experiment_se <- function(file, sheet, experiment_name,
                                species = "M. tuberculosis H37Rv",
                                omics_type = "Transcriptomics",
+                               expression_scale = "Relative",
                                pmid = NA_character_,
                                pmcid = NA_character_,
                                doi = NA_character_,
                                publication = NA_character_) {
   
-# ---- Reading columns correctly ----
+  # ---- Reading columns correctly ----
   # Will need work as we get new datasets, and could be standardized
   
   df <- read_excel(file, sheet = sheet)
@@ -38,13 +39,24 @@ load_experiment_se <- function(file, sheet, experiment_name,
   gene_name_col <- safe_pick(gene_name_col, fallback = gene_id_col)
   
   if (experiment_name == "Shee Transcriptome") {
+    
     assay_cols <- c("moxi2x_GSM1829746", "moxi4x_GSM1829747", "moxi8x_GSM1829748")
     assay_cols <- assay_cols[assay_cols %in% names(df)]
+    
   } else if (experiment_name == "Schubert Proteome") {
+    
     assay_cols <- names(df)[grepl("^expr_", names(df))]
+    
+  } else if (experiment_name == "Bei Transcriptome") {
+    
+    # Absolute transcriptome (log2 RPKM)
+    assay_cols <- "Mean_logRPKM"
+    
   } else {
+    
     assay_cols <- names(df)[grepl("log2", names(df), ignore.case = TRUE)]
   }
+  
   
   if (length(assay_cols) == 0) {
     message(paste("No assay columns detected for", experiment_name))
@@ -140,6 +152,7 @@ load_experiment_se <- function(file, sheet, experiment_name,
   experiment_summary <- data.frame(
     experiment_name = experiment_name,
     omics_type = omics_type,
+    expression_scale = expression_scale,
     species = species,
     n_genes = nrow(rowData),
     n_deg = nrow(deg_df),
@@ -252,6 +265,8 @@ se_Vilcheze <- load_experiment_se(
   file = "data/Transcriptome_Vilcheze.xlsx",
   sheet = "Table S2c log2 fold change",
   experiment_name = "Vilcheze Transcriptome",
+  omics_type = "Transcriptomics",
+  expression_scale = "Relative",
   doi = "10.3389/fimmu.2022.909904",
   pmcid = "PMC9283954",
   publication = "Transcriptional profiling of Mycobacterium tuberculosis"
@@ -261,6 +276,8 @@ se_Shee <- load_experiment_se(
   file = "data/Transcriptome_Shee.xlsx",
   sheet = "Sheet1",
   experiment_name = "Shee Transcriptome",
+  omics_type = "Transcriptomics",
+  expression_scale = "Relative",
   pmid = "35975988",
   doi = "10.1128/AAC.00592-22",
   publication = "Moxifloxacin-Mediated Killing of Mycobacterium tuberculosis Involves Respiratory Downshift, Reductive Stress, and Accumulation of Reactive Oxygen Species"
@@ -271,10 +288,26 @@ se_Schubert <- load_experiment_se(
   sheet = "Mtb absolute per condition",
   experiment_name = "Schubert Proteome",
   omics_type = "Proteomics",
+  expression_scale = "Absolute",
+  pmid = "26094805",
+  doi = "10.1016/j.chom.2015.06.001",
   publication = "Schubert Proteome 2015"
 )
 
-se_combined <- combine_se(list(se_Vilcheze, se_Shee, se_Schubert))
+se_Bei <- load_experiment_se(
+  file = "data/Transcriptome_Bei_2024.xlsx",
+  sheet = "log2FC of 5th and 95th",
+  experiment_name = "Bei Transcriptome",
+  omics_type = "Transcriptomics",
+  expression_scale = "Absolute",
+  pmid = "38600064",
+  pmcid = "PMC11006872",
+  doi = "10.1038/s41467-024-47410-5",
+  publication = "Genetically encoded transcriptional plasticity underlies stress adaptation in Mycobacterium tuberculosis"
+)
+
+
+se_combined <- combine_se(list(se_Vilcheze, se_Shee, se_Schubert, se_Bei))
 
 # ---- Shiny App ----
 
@@ -372,8 +405,8 @@ ui <- page_navbar(
             "heatmap_datasets",
             "Choose transcriptomic datasets:",
             choices = metadata(se_combined)$summary$experiment_name[
-              metadata(se_combined)$summary$omics_type == "Transcriptomics"
-            ],
+              metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                metadata(se_combined)$summary$expression_scale == "Relative"],
             selected = metadata(se_combined)$summary$experiment_name[
               metadata(se_combined)$summary$omics_type == "Transcriptomics"
             ]
@@ -405,6 +438,55 @@ ui <- page_navbar(
         ),
         mainPanel(
           plotlyOutput("heatmap_plot", height = "600px")
+        )
+      )
+    )
+  ),
+  
+  nav_panel(
+    "Scatterplot",
+    fluidPage(
+      br(),
+      sidebarLayout(
+        sidebarPanel(
+          selectizeInput(
+            "scatter_genes",
+            "Choose one or more genes:",
+            choices = rownames(rowData(se_combined)),
+            selected = rownames(rowData(se_combined))[1],
+            multiple = TRUE
+          ),
+          
+          h4("Transcriptomic Datasets (X‑axis)"),
+          checkboxGroupInput(
+            "scatter_transcript",
+            "Select transcriptomic datasets:",
+            choices = metadata(se_combined)$summary$experiment_name[
+              metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                metadata(se_combined)$summary$expression_scale == "Absolute"
+            ],
+            selected = metadata(se_combined)$summary$experiment_name[
+              metadata(se_combined)$summary$omics_type == "Transcriptomics"
+            ]
+          ),
+          
+          h4("Proteomic Datasets (Y‑axis)"),
+          checkboxGroupInput(
+            "scatter_protein",
+            "Select proteomic datasets:",
+            choices = metadata(se_combined)$summary$experiment_name[
+              metadata(se_combined)$summary$omics_type == "Proteomics" &
+                metadata(se_combined)$summary$expression_scale == "Absolute"
+            ],
+            selected = metadata(se_combined)$summary$experiment_name[
+              metadata(se_combined)$summary$omics_type == "Proteomics"
+            ]
+          )
+        ),
+        
+        mainPanel(
+          h3("Transcriptome vs Proteome Scatterplot"),
+          plotlyOutput("scatter_plot", height = "600px")
         )
       )
     )
@@ -744,6 +826,95 @@ server <- function(input, output, session) {
       }
     }
   )
+  
+  output$scatter_plot <- renderPlotly({
+    
+    selected_genes <- input$scatter_genes
+    if (is.null(selected_genes) || length(selected_genes) == 0) return(NULL)
+    
+    # ---- Identify Bei (absolute transcriptome) ----
+    bei_cols <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment == "Bei Transcriptome"
+    ]
+    
+    # ---- Identify Schubert (absolute proteome) ----
+    schubert_cols <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment == "Schubert Proteome"
+    ]
+    
+    if (length(bei_cols) == 0 || length(schubert_cols) == 0) return(NULL)
+    
+    # ---- Extract absolute transcript abundance ----
+    transcript_vals <- as.numeric(assay(se_combined)[, bei_cols])
+    transcript_vals <- 2 ^ transcript_vals   # convert log2 → absolute
+    
+    # ---- Extract absolute protein abundance ----
+    protein_vals <- as.numeric(assay(se_combined)[, schubert_cols])
+    
+    # ---- Build dataframe: one point per gene ----
+    df <- data.frame(
+      gene_id = rownames(se_combined),
+      transcript = transcript_vals,
+      protein = protein_vals,
+      stringsAsFactors = FALSE
+    )
+    
+    # ---- Mark selected genes ----
+    df$selected <- df$gene_id %in% selected_genes
+    
+    # ---- Hover text ----
+    df$hover <- paste0(
+      "<b>", df$gene_id, "</b>",
+      "<br>Transcript (absolute): ", round(df$transcript, 2),
+      "<br>Protein (absolute): ", round(df$protein, 2)
+    )
+    
+    # ---- Plot ----
+    plot_ly() %>%
+      
+      # Background points (all genes)
+      add_markers(
+        data = df[!df$selected, ],
+        x = ~transcript,
+        y = ~protein,
+        marker = list(size = 6, color = "lightgrey"),
+        hoverinfo = "text",
+        text = ~hover,
+        name = "All genes"
+      ) %>%
+      
+      # Highlighted points (selected genes)
+      add_markers(
+        data = df[df$selected, ],
+        x = ~transcript,
+        y = ~protein,
+        marker = list(size = 12, color = "firebrick"),
+        hoverinfo = "text",
+        text = ~hover,
+        name = "Selected genes"
+      ) %>%
+      
+      # Add text labels for selected genes
+      add_text(
+        data = df[df$selected, ],
+        x = ~transcript,
+        y = ~protein,
+        text = ~gene_id,
+        textposition = "top center",
+        textfont = list(size = 14, color = "black"),
+        showlegend = FALSE,
+        hoverinfo = "none"
+      ) %>%
+      
+      layout(
+        xaxis = list(title = "Absolute Transcript Abundance (Bei)"),
+        yaxis = list(title = "Absolute Protein Abundance (Schubert)"),
+        title = "Absolute Transcriptome vs Proteome"
+      )
+  })
+  
+  
+  
   
   output$total_degs <- renderText({
     nrow(metadata(se_combined)$deg_df)
