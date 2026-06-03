@@ -450,10 +450,11 @@ ui <- page_navbar(
       sidebarLayout(
         sidebarPanel(
           selectizeInput(
-            "scatter_gene",
-            "Choose a gene:",
+            "scatter_genes",
+            "Choose one or more genes:",
             choices = rownames(rowData(se_combined)),
-            selected = rownames(rowData(se_combined))[1]
+            selected = rownames(rowData(se_combined))[1],
+            multiple = TRUE
           ),
           
           h4("Transcriptomic Datasets (X‑axis)"),
@@ -828,61 +829,90 @@ server <- function(input, output, session) {
   
   output$scatter_plot <- renderPlotly({
     
-    gene <- input$scatter_gene
-    if (is.null(gene) || gene == "") return(NULL)
+    selected_genes <- input$scatter_genes
+    if (is.null(selected_genes) || length(selected_genes) == 0) return(NULL)
     
-    # ---- Identify selected transcriptomic conditions ----
-    transcript_cols <- rownames(colData(se_combined))[
-      colData(se_combined)$experiment %in% input$scatter_transcript
+    # ---- Identify Bei (absolute transcriptome) ----
+    bei_cols <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment == "Bei Transcriptome"
     ]
     
-    if (length(transcript_cols) == 0) return(NULL)
-    
-    # ---- Extract transcriptomic log2FC values ----
-    x_vals <- as.numeric(assay(se_combined)[gene, transcript_cols])
-    
-    # ---- Extract proteomic absolute abundance (Schubert only) ----
-    proteomic_cols <- rownames(colData(se_combined))[
-      colData(se_combined)$experiment %in% input$scatter_protein
+    # ---- Identify Schubert (absolute proteome) ----
+    schubert_cols <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment == "Schubert Proteome"
     ]
     
-    if (length(proteomic_cols) == 0) return(NULL)
+    if (length(bei_cols) == 0 || length(schubert_cols) == 0) return(NULL)
     
-    # Schubert is absolute abundance → take the mean if multiple columns
-    y_val <- mean(as.numeric(assay(se_combined)[gene, proteomic_cols]), na.rm = TRUE)
+    # ---- Extract absolute transcript abundance ----
+    transcript_vals <- as.numeric(assay(se_combined)[, bei_cols])
+    transcript_vals <- 2 ^ transcript_vals   # convert log2 → absolute
     
-    # ---- Build dataframe: one point per transcriptomic condition ----
+    # ---- Extract absolute protein abundance ----
+    protein_vals <- as.numeric(assay(se_combined)[, schubert_cols])
+    
+    # ---- Build dataframe: one point per gene ----
     df <- data.frame(
-      transcript_condition = transcript_cols,
-      transcript_exp = colData(se_combined)[transcript_cols, "experiment"],
-      x = x_vals,
-      y = y_val
+      gene_id = rownames(se_combined),
+      transcript = transcript_vals,
+      protein = protein_vals,
+      stringsAsFactors = FALSE
     )
     
+    # ---- Mark selected genes ----
+    df$selected <- df$gene_id %in% selected_genes
+    
+    # ---- Hover text ----
     df$hover <- paste0(
-      "<b>Gene: ", gene, "</b>",
-      "<br>Transcriptomic condition: ", df$transcript_condition,
-      "<br>Experiment: ", df$transcript_exp,
-      "<br><br>log2FC (Transcriptome): ", round(df$x, 3),
-      "<br>Protein abundance (absolute): ", round(df$y, 3)
+      "<b>", df$gene_id, "</b>",
+      "<br>Transcript (absolute): ", round(df$transcript, 2),
+      "<br>Protein (absolute): ", round(df$protein, 2)
     )
     
-    plot_ly(
-      df,
-      x = ~x,
-      y = ~y,
-      type = "scatter",
-      mode = "markers",
-      text = ~hover,
-      hoverinfo = "text",
-      marker = list(size = 14, color = "firebrick")
-    ) %>%
+    # ---- Plot ----
+    plot_ly() %>%
+      
+      # Background points (all genes)
+      add_markers(
+        data = df[!df$selected, ],
+        x = ~transcript,
+        y = ~protein,
+        marker = list(size = 6, color = "lightgrey"),
+        hoverinfo = "text",
+        text = ~hover,
+        name = "All genes"
+      ) %>%
+      
+      # Highlighted points (selected genes)
+      add_markers(
+        data = df[df$selected, ],
+        x = ~transcript,
+        y = ~protein,
+        marker = list(size = 12, color = "firebrick"),
+        hoverinfo = "text",
+        text = ~hover,
+        name = "Selected genes"
+      ) %>%
+      
+      # Add text labels for selected genes
+      add_text(
+        data = df[df$selected, ],
+        x = ~transcript,
+        y = ~protein,
+        text = ~gene_id,
+        textposition = "top center",
+        textfont = list(size = 14, color = "black"),
+        showlegend = FALSE,
+        hoverinfo = "none"
+      ) %>%
+      
       layout(
-        xaxis = list(title = "Transcriptomic log2FC"),
-        yaxis = list(title = "Proteomic abundance"),
-        title = paste("Transcriptome vs Proteome for", gene)
+        xaxis = list(title = "Absolute Transcript Abundance (Bei)"),
+        yaxis = list(title = "Absolute Protein Abundance (Schubert)"),
+        title = "Absolute Transcriptome vs Proteome"
       )
   })
+  
   
   
   
