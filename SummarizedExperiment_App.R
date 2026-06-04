@@ -384,48 +384,58 @@ ui <- page_navbar(
           )
         ),
         mainPanel(
-          h3("Gene Information"),
-          tableOutput("gene_info"),
-          br(),
-          h3("Relative Expression Comparison"),
-          
-          fluidRow(
-            column(
-              width = 4,
-              selectizeInput(
-                "gb_condA",
-                "Condition A:",
-                choices = rownames(colData(se_combined))[
-                  colData(se_combined)$experiment %in%
-                    metadata(se_combined)$summary$experiment_name[
-                      metadata(se_combined)$summary$omics_type == "Transcriptomics" &
-                        metadata(se_combined)$summary$expression_scale == "Relative"
-                    ]
-                ]
-              )
+          accordion(
+            id = "gb_sections",
+            
+            accordion_panel(
+              title = "Gene Information",
+              tableOutput("gene_info")
             ),
-            column(
-              width = 4,
-              selectizeInput(
-                "gb_condB",
-                "Condition B:",
-                choices = rownames(colData(se_combined))[
-                  colData(se_combined)$experiment %in%
-                    metadata(se_combined)$summary$experiment_name[
-                      metadata(se_combined)$summary$omics_type == "Transcriptomics" &
-                        metadata(se_combined)$summary$expression_scale == "Relative"
+            
+            accordion_panel(
+              title = "Relative Expression Comparison",
+              
+              fluidRow(
+                column(
+                  width = 4,
+                  selectizeInput(
+                    "gb_condA",
+                    "Condition A:",
+                    choices = rownames(colData(se_combined))[
+                      colData(se_combined)$experiment %in%
+                        metadata(se_combined)$summary$experiment_name[
+                          metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                            metadata(se_combined)$summary$expression_scale == "Relative"
+                        ]
                     ]
-                ]
-              )
+                  )
+                ),
+                column(
+                  width = 4,
+                  selectizeInput(
+                    "gb_condB",
+                    "Condition B:",
+                    choices = rownames(colData(se_combined))[
+                      colData(se_combined)$experiment %in%
+                        metadata(se_combined)$summary$experiment_name[
+                          metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                            metadata(se_combined)$summary$expression_scale == "Relative"
+                        ]
+                    ]
+                  )
+                )
+              ),
+              
+              tableOutput("gb_relcomp")
+            ),
+            
+            accordion_panel(
+              title = "Expression Values by Experiment",
+              tableOutput("gene_expression_all")
             )
-          ),
+          )
           
-          tableOutput("gb_relcomp"),
           
-          br(),
-          
-          h3("Expression Values"),
-          tableOutput("gene_expression_all")
         )
       )
     )
@@ -492,35 +502,28 @@ ui <- page_navbar(
             "Choose transcriptomic datasets:",
             choices = metadata(se_combined)$summary$experiment_name[
               metadata(se_combined)$summary$omics_type == "Transcriptomics" &
-                metadata(se_combined)$summary$expression_scale == "Relative"],
+                metadata(se_combined)$summary$expression_scale == "Relative"
+            ],
             selected = metadata(se_combined)$summary$experiment_name[
-              metadata(se_combined)$summary$omics_type == "Transcriptomics"
+              metadata(se_combined)$summary$omics_type == "Transcriptomics" &
+                metadata(se_combined)$summary$expression_scale == "Relative"
             ]
           ),
-          selectizeInput(
-            "heatmap_gene",
-            "Choose a gene:",
-            choices = rownames(rowData(se_combined)),
-            selected = rownames(rowData(se_combined))[1]
+          
+          uiOutput("heatmap_condition_selector"),
+          
+          # --- Gene selection mode toggle ---
+          radioButtons(
+            "heatmap_gene_mode",
+            "Gene selection method:",
+            choices = c("Individual genes" = "single",
+                        "Nearby gene window" = "window"),
+            selected = "single"
           ),
-          selectizeInput(
-            "heatmap_conditions",
-            "Search/select conditions:",
-            choices = rownames(colData(se_combined))[
-              colData(se_combined)$experiment %in%
-                metadata(se_combined)$summary$experiment_name[
-                  metadata(se_combined)$summary$omics_type == "Transcriptomics"
-                ]
-            ],
-            selected = rownames(colData(se_combined))[
-              colData(se_combined)$experiment %in%
-                metadata(se_combined)$summary$experiment_name[
-                  metadata(se_combined)$summary$omics_type == "Transcriptomics"
-                ]
-            ],
-            multiple = TRUE
-          ),
-          numericInput("n_genes", "Nearby genes:", 20, min = 5, max = 100)
+          
+          # --- Dynamic UI for gene selection ---
+          uiOutput("heatmap_gene_selector")
+          
         ),
         mainPanel(
           plotlyOutput("heatmap_plot", height = "600px")
@@ -622,11 +625,25 @@ ui <- page_navbar(
             "Filter DEG direction:",
             choices = c("All", "Up", "Down")
           ),
-          selectInput(
-            "deg_experiment_filter",
-            "Filter experiment:",
-            choices = c("All", unique(metadata(se_combined)$deg_df$experiment))
-          )
+          numericInput(
+            "deg_magnitude",
+            "Minimum |log2FC| magnitude:",
+            value = 0,
+            min = 0,
+            max = 20,
+            step = 0.1
+          ),
+          
+          selectizeInput(
+            "deg_experiments",
+            "Select datasets:",
+            choices = unique(metadata(se_combined)$deg_df$experiment),
+            multiple = TRUE,
+            selected = unique(metadata(se_combined)$deg_df$experiment)
+          ),
+          
+          uiOutput("deg_condition_selector")
+          
         ),
         mainPanel(
           h3("Differentially Expressed Genes"),
@@ -810,29 +827,50 @@ server <- function(input, output, session) {
   
   output$heatmap_plot <- renderPlotly({
     
-    gene_index <- match(input$heatmap_gene, rownames(assay(se_combined)))
-    if (is.na(gene_index)) return(NULL)
+    # --- MULTI‑GENE SUPPORT ---
+    genes <- input$heatmap_gene
+    if (is.null(genes) || length(genes) == 0) return(NULL)
     
-    start <- max(1, gene_index - floor(input$n_genes / 2))
-    end <- min(nrow(assay(se_combined)), gene_index + floor(input$n_genes / 2))
+    # Convert gene IDs to row indices
+    gene_index <- match(genes, rownames(assay(se_combined)))
+    gene_index <- gene_index[!is.na(gene_index)]
+    if (length(gene_index) == 0) return(NULL)
     
+    # --- RANGE SELECTION ---
+    if (input$heatmap_gene_mode == "single") {
+      
+      # Show exactly the selected genes
+      start <- min(gene_index)
+      end   <- max(gene_index)
+      
+    } else {
+      
+      # Window mode (center gene + window size)
+      nwin <- input$n_genes
+      if (is.null(nwin) || is.na(nwin) || nwin < 1) return(NULL)
+      
+      center <- gene_index[1]   # first selected gene is the center
+      half <- floor(nwin / 2)
+      
+      start <- max(1, center - half)
+      end   <- min(nrow(assay(se_combined)), center + half)
+    }
+    
+    # --- CONDITION FILTERING ---
     transcript_cols <- input$heatmap_conditions
-    
     transcript_cols <- transcript_cols[
       colData(se_combined)[transcript_cols, "experiment"] %in% input$heatmap_datasets
     ]
+    if (length(transcript_cols) == 0) return(NULL)
     
-    if (length(transcript_cols) == 0) {
-      return(NULL)
-    }
-    
+    # --- EXTRACT MATRIX ---
     mat <- assay(se_combined)[start:end, transcript_cols, drop = FALSE]
     
+    # --- LONG FORMAT ---
     df_long <- reshape2::melt(mat)
     colnames(df_long) <- c("Gene", "Condition", "Value")
     
     gene_info <- as.data.frame(rowData(se_combined))
-    
     df_long$gene_name <- gene_info$gene_name[
       match(df_long$Gene, gene_info$gene_id)
     ]
@@ -859,6 +897,7 @@ server <- function(input, output, session) {
       match(df_long$experiment, summary_df$experiment_name)
     ]
     
+    # --- P‑VALUES ---
     deg_df <- metadata(se_combined)$deg_df
     
     df_long$p_value <- vapply(seq_len(nrow(df_long)), function(i) {
@@ -888,6 +927,7 @@ server <- function(input, output, session) {
       paste0("P-value: ", formatC(df_long$p_value, format = "e", digits = 2))
     )
     
+    # --- HOVER TEXT ---
     df_long$hover_text <- paste0(
       "<b>", df_long$Gene, "</b>",
       "<br>", df_long$gene_name,
@@ -902,6 +942,7 @@ server <- function(input, output, session) {
       "Click for publication details"
     )
     
+    # --- PLOT ---
     p <- plot_ly(
       data = df_long,
       x = ~Condition,
@@ -917,6 +958,29 @@ server <- function(input, output, session) {
     p <- event_register(p, "plotly_click")
     p
   })
+  
+  
+  output$heatmap_condition_selector <- renderUI({
+    
+    exps <- input$heatmap_datasets
+    
+    if (is.null(exps) || length(exps) == 0) {
+      return(tags$div("Select one or more datasets to choose conditions."))
+    }
+    
+    # Find all conditions belonging to selected experiments
+    conds <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment %in% exps
+    ]
+    
+    checkboxGroupInput(
+      "heatmap_conditions",
+      "Select conditions:",
+      choices = conds,
+      selected = conds
+    )
+  })
+  
   
   observeEvent(
     event_data("plotly_click", source = "heatmap_click"),
@@ -1019,6 +1083,51 @@ server <- function(input, output, session) {
     }
   )
   
+  output$heatmap_gene_selector <- renderUI({
+    
+    if (input$heatmap_gene_mode == "single") {
+      
+      selectizeInput(
+        "heatmap_gene",
+        "Choose one or more genes:",
+        choices = rownames(rowData(se_combined)),
+        selected = rownames(rowData(se_combined))[1],
+        multiple = TRUE,
+        options = list(
+          placeholder = "Type gene names…",
+          maxOptions = 5000
+        )
+      )
+      
+      
+      
+    } else {
+      
+      # Window mode
+      tagList(
+        selectizeInput(
+          "heatmap_gene",
+          "Choose a gene:",
+          choices = rownames(rowData(se_combined)),
+          selected = rownames(rowData(se_combined))[1],
+          options = list(
+            placeholder = "Type a gene name…",
+            maxOptions = 5000
+          )
+        )
+        ,
+        numericInput(
+          "n_genes",
+          "Nearby genes:",
+          value = 20,
+          min = 5,
+          max = 100
+        )
+      )
+    }
+  })
+  
+  
   output$scatter_plot <- renderPlotly({
     
     selected_genes <- input$scatter_genes
@@ -1105,6 +1214,26 @@ server <- function(input, output, session) {
       )
   })
   
+  output$deg_condition_selector <- renderUI({
+    
+    exps <- input$deg_experiments
+    
+    if (is.null(exps) || length(exps) == 0) {
+      return(tags$div("Select one or more datasets to choose conditions."))
+    }
+    
+    # Find all conditions belonging to selected experiments
+    conds <- rownames(colData(se_combined))[
+      colData(se_combined)$experiment %in% exps
+    ]
+    
+    checkboxGroupInput(
+      "deg_conditions",
+      "Select conditions:",
+      choices = conds,
+      selected = conds
+    )
+  })
   
   
   
@@ -1121,27 +1250,63 @@ server <- function(input, output, session) {
   })
   
   output$deg_table <- renderDT({
-    df <- metadata(se_combined)$deg_df
     
+    deg_df <- metadata(se_combined)$deg_df
+    
+    # ---- Filter rows by selected datasets ----
+    if (!is.null(input$deg_experiments) && length(input$deg_experiments) > 0) {
+      deg_df <- deg_df[deg_df$experiment %in% input$deg_experiments, ]
+    }
+    
+    # ---- Determine selected conditions ----
+    conds <- input$deg_conditions
+    
+    # Build fc column names
+    fc_cols <- paste0("fc_", conds)
+    fc_cols <- fc_cols[fc_cols %in% colnames(deg_df)]
+    
+    # ---- Direction filtering across selected conditions ----
     if (input$deg_filter != "All") {
-      df <- df %>% filter(deg_direction == input$deg_filter)
+      
+      if (input$deg_filter == "Up") {
+        keep_dir <- apply(deg_df[, fc_cols, drop = FALSE], 1, function(x) any(x > 0, na.rm = TRUE))
+      } else if (input$deg_filter == "Down") {
+        keep_dir <- apply(deg_df[, fc_cols, drop = FALSE], 1, function(x) any(x < 0, na.rm = TRUE))
+      } else {
+        keep_dir <- apply(deg_df[, fc_cols, drop = FALSE], 1, function(x) any(x == 0, na.rm = TRUE))
+      }
+      
+      deg_df <- deg_df[keep_dir, ]
     }
     
-    if (input$deg_experiment_filter != "All") {
-      df <- df %>% filter(experiment == input$deg_experiment_filter)
+    # ---- Magnitude filtering across selected conditions ----
+    mag <- input$deg_magnitude
+    
+    if (!is.null(mag) && mag > 0) {
+      keep_mag <- apply(deg_df[, fc_cols, drop = FALSE], 1, function(x) any(abs(x) >= mag, na.rm = TRUE))
+      deg_df <- deg_df[keep_mag, ]
     }
     
-    datatable(
-      df,
-      rownames = FALSE,
-      filter = "top",
-      options = list(
-        pageLength = 15,
-        scrollX = TRUE,
-        autoWidth = TRUE
-      )
-    )
+    # ---- Determine which columns to keep ----
+    base_cols <- c("gene_id", "gene_name", "deg_direction")
+    
+    # padj columns
+    padj_cols <- paste0("padj_", sub("^log2_Fold_change_", "", conds))
+    padj_cols <- padj_cols[padj_cols %in% colnames(deg_df)]
+    
+    # sd columns
+    sd_cols <- paste0("sd_", sub("^log2_Fold_change_", "", conds))
+    sd_cols <- sd_cols[sd_cols %in% colnames(deg_df)]
+    
+    keep_cols <- c(base_cols, fc_cols, padj_cols, sd_cols)
+    keep_cols <- keep_cols[keep_cols %in% colnames(deg_df)]
+    
+    df_out <- deg_df[, keep_cols, drop = FALSE]
+    
+    datatable(df_out, rownames = FALSE)
   })
+  
+  
 }
 
 shinyApp(ui, server)
