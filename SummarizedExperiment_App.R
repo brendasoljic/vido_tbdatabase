@@ -570,7 +570,22 @@ ui <- page_navbar(
             selected = metadata(se_combined)$summary$experiment_name[
               metadata(se_combined)$summary$omics_type == "Proteomics"
             ]
+          ),
+          selectInput(
+            "scatter_scale_x",
+            "X‑axis scaling:",
+            choices = c("Linear" = "linear", "Log2" = "log2"),
+            selected = "linear"
+          ),
+          
+          selectInput(
+            "scatter_scale_y",
+            "Y‑axis scaling:",
+            choices = c("Linear" = "linear", "Log2" = "log2"),
+            selected = "linear"
           )
+          
+          
         ),
         
         mainPanel(
@@ -1160,6 +1175,26 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
     
+    # ---- Independent axis scaling ----
+    
+    # X‑axis
+    if (input$scatter_scale_x == "log2") {
+      df <- df[df$transcript > 0, ]   # remove invalid values
+      df$transcript_scaled <- log2(df$transcript)
+    } else {
+      df$transcript_scaled <- df$transcript
+    }
+    
+    # Y‑axis
+    if (input$scatter_scale_y == "log2") {
+      df <- df[df$protein > 0, ]      # remove invalid values
+      df$protein_scaled <- log2(df$protein)
+    } else {
+      df$protein_scaled <- df$protein
+    }
+    
+    
+    
     # ---- Mark selected genes ----
     df$selected <- df$gene_id %in% selected_genes
     
@@ -1187,8 +1222,8 @@ server <- function(input, output, session) {
       # Highlighted points (selected genes)
       add_markers(
         data = df[df$selected, ],
-        x = ~transcript,
-        y = ~protein,
+        x = ~transcript_scaled,
+        y = ~protein_scaled,
         marker = list(size = 12, color = "firebrick"),
         hoverinfo = "text",
         text = ~hover,
@@ -1198,8 +1233,8 @@ server <- function(input, output, session) {
       # Add text labels for selected genes
       add_text(
         data = df[df$selected, ],
-        x = ~transcript,
-        y = ~protein,
+        x = ~transcript_scaled,
+        y = ~protein_scaled,
         text = ~gene_id,
         textposition = "top center",
         textfont = list(size = 14, color = "black"),
