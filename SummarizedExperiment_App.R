@@ -601,38 +601,6 @@ ui <- page_navbar(
     fluidPage(
       br(),
       
-      fluidRow(
-        column(
-          width = 4,
-          card(
-            card_header("Total DEGs"),
-            card_body(
-              h2(textOutput("total_degs"))
-            )
-          )
-        ),
-        column(
-          width = 4,
-          card(
-            card_header("Upregulated"),
-            card_body(
-              h2(textOutput("up_degs"))
-            )
-          )
-        ),
-        column(
-          width = 4,
-          card(
-            card_header("Downregulated"),
-            card_body(
-              h2(textOutput("down_degs"))
-            )
-          )
-        )
-      ),
-      
-      br(),
-      
       sidebarLayout(
         sidebarPanel(
           selectInput(
@@ -1272,18 +1240,6 @@ server <- function(input, output, session) {
   
   
   
-  output$total_degs <- renderText({
-    nrow(metadata(se_combined)$deg_df)
-  })
-  
-  output$up_degs <- renderText({
-    sum(metadata(se_combined)$deg_df$deg_direction == "Up", na.rm = TRUE)
-  })
-  
-  output$down_degs <- renderText({
-    sum(metadata(se_combined)$deg_df$deg_direction == "Down", na.rm = TRUE)
-  })
-  
   output$deg_table <- renderDT({
     
     deg_df <- metadata(se_combined)$deg_df
@@ -1337,6 +1293,13 @@ server <- function(input, output, session) {
     keep_cols <- keep_cols[keep_cols %in% colnames(deg_df)]
     
     df_out <- deg_df[, keep_cols, drop = FALSE]
+    
+    # ---- Round numeric expression columns ----
+    num_cols <- setdiff(colnames(df_out), c("gene_id", "gene_name", "deg_direction"))
+    df_out[num_cols] <- lapply(df_out[num_cols], function(x) {
+      if (is.numeric(x)) round(x, 3) else x
+    })
+    
     
     datatable(df_out, rownames = FALSE)
   })
